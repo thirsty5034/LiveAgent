@@ -61,6 +61,12 @@ export type CompactionPreSendBinding = {
   uploadedFiles?: PendingUploadedFile[];
   // 压缩/prune 后如何得到要 apply 的最终状态（如重新附加待发送的用户消息）。
   composeAppliedState: (state: ConversationViewState) => ConversationViewState;
+  // 持久化前的状态修正。compaction 的 baseState 不含本轮待发送用户消息，
+  // 但 DB 侧 initialPersist 已把用户消息 upsert 进 seg0（totalMessageCount
+  // 已包含它）。若直接用 outcome.state 持久化，append 一致性校验
+  // SUM(DB seg0 + seg1) != totalMessageCount 会 BUSINESS_ERROR。
+  // 缺省不修正（无该场景的调用方保持原行为）。
+  composePersistedState?: (state: ConversationViewState) => ConversationViewState;
 };
 
 export type CompactionTurnBinding = {
@@ -206,7 +212,11 @@ export class CompactionController {
         complete: binding.complete,
       });
 
-      await binding.sinks.persist?.(outcome.state);
+      await binding.sinks.persist?.(
+        presend.composePersistedState
+          ? presend.composePersistedState(outcome.state)
+          : outcome.state,
+      );
       this.rollbackSnapshot = null;
       const appliedState = presend.composeAppliedState(outcome.state);
       binding.sinks.applyState?.(appliedState);

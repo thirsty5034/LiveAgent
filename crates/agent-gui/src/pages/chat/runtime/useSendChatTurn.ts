@@ -1148,6 +1148,20 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
         composerText: content,
         uploadedFiles,
         composeAppliedState: (state) => appendMessagesToConversation(state, [pendingUserMessage]),
+        composePersistedState: (state) => {
+          // compaction 的 baseState 不含本轮用户消息，但 DB 侧 initialPersist
+          // 已把用户消息 upsert 进 seg0（totalMessageCount 含它）。此处只对齐
+          // totalMessageCount（不把用户消息塞进新分段，避免与 DB seg0 重复），
+          // 使 append 一致性校验 SUM(seg0 + seg1) == total 通过。
+          const withPendingUserMessage = appendMessagesToConversation(state, [pendingUserMessage]);
+          return {
+            ...state,
+            meta: {
+              ...state.meta,
+              totalMessageCount: withPendingUserMessage.meta.totalMessageCount,
+            },
+          };
+        },
       },
       sinks: {
         applyState: applyConversationState,
@@ -1159,8 +1173,14 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
           })),
         setBridgeToolStatus: updateGatewayBridgeToolStatus,
         queueCheckpoint: (state) => gatewayBridgeEvents.queueCheckpoint(state),
-        persist: (state) =>
-          persistConversation({
+        persist: async (state) => {
+          // 保证 compaction/checkpoint 持久化发生在 initialPersist 之后：
+          // DB seg0（含用户消息）与游标就绪后 append 才不会因 SUM 不匹配失败，
+          // 也避免 compaction persist 先于 initialPersist 造成游标/分段状态错乱。
+          if (initialPersistPromise) {
+            await initialPersistPromise.catch(() => false);
+          }
+          return persistConversation({
             conversationId,
             sessionId,
             providerId,
@@ -1171,7 +1191,8 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             fallbackTitle,
             createdAt,
             titlePromise,
-          }),
+          });
+        },
         restoreComposer: (composerText, restoredUploads) => {
           if (isConversationVisible() && typeof composerText === "string") {
             composerRef.current?.setText(composerText);
