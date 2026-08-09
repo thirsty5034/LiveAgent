@@ -8,7 +8,7 @@ import {
   normalizeGitRepositoryDiscovery,
   normalizeGitRepositoryState,
 } from "@liveagent/ui/lib/git/types";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../tauriBridge";
 
 export const tauriGitClient: GitClient = {
   async status(workdir) {

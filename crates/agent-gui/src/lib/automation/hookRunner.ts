@@ -6,7 +6,7 @@
 import type { HookDef, HookEvent, HookType } from "@liveagent/ui/lib/automation/types";
 
 import { createUuid } from "@liveagent/ui/lib/shared/id";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../tauriBridge";
 
 export type HookRunWarning = {
   hookName: string;

@@ -5,7 +5,6 @@ import type {
   MentionComposerLargePaste,
 } from "@liveagent/ui/components/chat/MentionComposer";
 import { normalizeLogicalLineEndings } from "@liveagent/ui/lib/chat/composerText";
-import { invoke } from "@tauri-apps/api/core";
 import {
   escapeMarkdownReferenceLabel,
   formatCodeMentionToken,
@@ -16,6 +15,7 @@ import {
   type PendingUploadedFile,
   withPastedTextDisplayMetadata,
 } from "../../../lib/chat/messages/uploadedFiles";
+import { invoke } from "../../../lib/tauriBridge";
 
 type SystemImportPastedTextsResponse = {
   files: PendingUploadedFile[];
