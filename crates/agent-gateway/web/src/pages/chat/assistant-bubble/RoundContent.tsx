@@ -57,6 +57,7 @@ export const RetryDetailsBlock = memo(function RetryDetailsBlock({
                 and the list is append-only, so the index is the stable key. */}
             {attempts.map((entry, index) => (
               <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: retry attempts are append-only and their reported ordinals can repeat.
                 key={`${index}-${entry.attempt}-${entry.maxAttempts}`}
                 className="rounded-md border border-border/60 bg-muted/30 px-2.5 py-1.5 text-[calc(12px*var(--zone-font-scale,1))] text-muted-foreground"
               >
@@ -193,6 +194,7 @@ export const RoundContent = memo(function RoundContent(props: {
             <ThinkingActivity
               key={block.key}
               text={block.text}
+              open={autoOpenThinking && block.key === latestThinkingKey}
               isRunning={autoOpenThinking && block.key === latestThinkingKey}
               renderMode={renderMode ?? (isStreaming ? "streaming" : "static")}
               workdir={workdir}

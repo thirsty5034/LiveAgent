@@ -1,7 +1,9 @@
 // Classification and resolution of link/image targets found in a markdown
-// file rendered by the workspace file preview. `markdownPath` is the
-// workdir-relative logical path of the markdown file (forward slashes, no
-// leading slash), as returned by the fs backend.
+// file rendered by the workspace file preview. `markdownPath` is the logical
+// path returned by the fs backend: workdir-relative for workspace files, or a
+// skill:// path for installed Skill files.
+
+import { formatSkillPath, parseSkillPath } from "@liveagent/ui/lib/skills/skillPaths";
 
 export type WorkspaceMarkdownTarget =
   | { kind: "external"; url: string }
@@ -20,19 +22,23 @@ function decodePathSegment(segment: string) {
   }
 }
 
-// Resolves a relative (or workspace-root-absolute) markdown target against
-// the markdown file's directory. Returns a workdir-relative path, or null
-// when the target escapes the workspace root or resolves to nothing.
+// Resolves a relative (or scope-root-absolute) markdown target against the
+// markdown file's directory. Skill targets stay inside their originating
+// Skill directory; workspace targets stay inside the workspace root.
 export function resolveWorkspaceMarkdownPath(markdownPath: string, target: string): string | null {
   const withoutFragment = target.split("#")[0] ?? "";
   const withoutQuery = withoutFragment.split("?")[0] ?? "";
   const normalized = withoutQuery.replace(/\\/g, "/");
   if (!normalized) return null;
 
+  // A Skill's markdown resolves inside its own Skill directory, so `/foo.png`
+  // and `../foo.png` stay scoped to that Skill rather than the workspace.
+  const skillScope = parseSkillPath(markdownPath);
+  const scopeRelativePath = skillScope?.relativePath ?? markdownPath.replace(/\\/g, "/");
+
   const segments = normalized.startsWith("/")
     ? []
-    : markdownPath
-        .replace(/\\/g, "/")
+    : scopeRelativePath
         .split("/")
         .slice(0, -1)
         .filter((segment) => segment && segment !== ".");
@@ -48,7 +54,9 @@ export function resolveWorkspaceMarkdownPath(markdownPath: string, target: strin
     segments.push(segment);
   }
 
-  return segments.length ? segments.join("/") : null;
+  if (!segments.length) return null;
+  const resolvedPath = segments.join("/");
+  return skillScope ? formatSkillPath(skillScope.baseDir, resolvedPath) : resolvedPath;
 }
 
 export function classifyWorkspaceMarkdownTarget(

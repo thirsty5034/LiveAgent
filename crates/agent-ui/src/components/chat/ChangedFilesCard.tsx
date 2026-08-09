@@ -14,6 +14,7 @@ import { FileChangeBadge } from "@liveagent/ui/components/chat/FileChangeBadge";
 import { getFileTypeIcon } from "@liveagent/ui/components/chat/fileTypeIcons";
 import { useLocale } from "@liveagent/ui/i18n/index";
 import { cn } from "@liveagent/ui/lib/shared/utils";
+import { isSkillPath } from "@liveagent/ui/lib/skills/skillPaths";
 import { createContext, memo, useContext, useMemo } from "react";
 
 export type ChangedFilesActions = {
@@ -46,7 +47,12 @@ const ChangedFileRow = memo(function ChangedFileRow({ file }: { file: ChangedFil
   const { t } = useLocale();
   const actions = useChangedFilesActions();
   const { dir, base } = splitPath(file.path);
+  // Skill files live outside the workspace, so the file tree and git review
+  // cannot locate them; only the editor/preview action applies.
+  const skillPath = isSkillPath(file.path);
   const canOpen = Boolean(actions?.onOpenFile) && !file.deleted;
+  const canReveal = Boolean(actions?.onRevealInFileTree) && !skillPath;
+  const canOpenDiff = Boolean(actions?.onOpenDiff) && !skillPath;
   const FileTypeIcon = getFileTypeIcon(file.path, "file");
   const openLabel = `${t("chat.changedFiles.open")}: ${file.path}`;
   const revealLabel = `${t("chat.changedFiles.reveal")}: ${file.path}`;
@@ -96,10 +102,10 @@ const ChangedFileRow = memo(function ChangedFileRow({ file }: { file: ChangedFil
       ) : (
         <FileChangeBadge added={file.added} removed={file.removed} />
       )}
-      {actions?.onRevealInFileTree ? (
+      {canReveal ? (
         <button
           type="button"
-          onClick={() => actions.onRevealInFileTree?.(file.path)}
+          onClick={() => actions?.onRevealInFileTree?.(file.path)}
           title={revealLabel}
           aria-label={revealLabel}
           className={ROW_ACTION_CLASS}
@@ -107,10 +113,10 @@ const ChangedFileRow = memo(function ChangedFileRow({ file }: { file: ChangedFil
           <FolderTree className="h-3.5 w-3.5" />
         </button>
       ) : null}
-      {actions?.onOpenDiff ? (
+      {canOpenDiff ? (
         <button
           type="button"
-          onClick={() => actions.onOpenDiff?.(file.path)}
+          onClick={() => actions?.onOpenDiff?.(file.path)}
           title={diffLabel}
           aria-label={diffLabel}
           className={ROW_ACTION_CLASS}
@@ -134,6 +140,8 @@ export const ChangedFilesCard = memo(function ChangedFilesCard({
       summary.files.length === 1 ? "chat.changedFiles.titleOne" : "chat.changedFiles.title";
     return t(key).replace("{count}", String(summary.files.length));
   }, [summary.files.length, t]);
+  const canOpenReview =
+    Boolean(actions?.onOpenDiff) && summary.files.some((file) => !isSkillPath(file.path));
 
   return (
     <div className="changed-files-card overflow-hidden rounded-xl border border-border/45 bg-background/60 backdrop-blur-sm dark:border-white/[0.07] dark:bg-white/[0.03]">
@@ -147,10 +155,10 @@ export const ChangedFilesCard = memo(function ChangedFilesCard({
           </span>
           <FileChangeBadge added={summary.totalAdded} removed={summary.totalRemoved} />
         </div>
-        {actions?.onOpenDiff ? (
+        {canOpenReview ? (
           <button
             type="button"
-            onClick={() => actions.onOpenDiff?.(null)}
+            onClick={() => actions?.onOpenDiff?.(null)}
             className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[calc(11px*var(--zone-font-scale,1))] font-medium leading-none text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground focus-visible:bg-foreground/[0.06] focus-visible:outline-none"
           >
             <GitCommitHorizontal className="h-3.5 w-3.5" />

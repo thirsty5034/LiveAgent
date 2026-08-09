@@ -2049,7 +2049,6 @@ html[data-liveagent-webui="gateway"] .settings-tools-view-enter {
   display: block;
   width: 60px;
   height: 60px;
-  border-radius: 16px;
   filter: drop-shadow(0 6px 14px hsl(206 45% 28% / 0.18));
   user-select: none;
 }

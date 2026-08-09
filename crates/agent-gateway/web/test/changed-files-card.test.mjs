@@ -55,9 +55,9 @@ function createCardModule() {
 
 function renderCard(
   { cardModule, jsxRuntime, renderToStaticMarkup },
-  { withActions = false, fileCount = 4 } = {},
+  { withActions = false, fileCount = 4, files } = {},
 ) {
-  const paths = [
+  const paths = files ?? [
     { path: "src/components/ChangedFilesCard.tsx", deleted: false },
     { path: "README.md", deleted: false },
     { path: "src\\pages\\Settings.tsx", deleted: false },
@@ -151,4 +151,40 @@ test("WebUI changed-files actions include the localized action and canonical pat
     !html.includes('aria-label="chat.changedFiles.open: tmp/removed.ts"'),
     "deleted files must not expose the open-file action",
   );
+});
+
+test("WebUI changed-files actions hide workspace-only controls for Skill paths", () => {
+  const modules = createCardModule();
+  const skillPath = "skill://demo/SKILL.md";
+  const deletedSkillPath = "skill://demo/removed.md";
+  const skillOnlyHtml = renderCard(modules, {
+    withActions: true,
+    fileCount: 2,
+    files: [
+      { path: skillPath, deleted: false },
+      { path: deletedSkillPath, deleted: true },
+    ],
+  });
+
+  assert.ok(skillOnlyHtml.includes(`aria-label="chat.changedFiles.open: ${skillPath}"`));
+  for (const path of [skillPath, deletedSkillPath]) {
+    assert.ok(!skillOnlyHtml.includes(`aria-label="chat.changedFiles.reveal: ${path}"`));
+    assert.ok(!skillOnlyHtml.includes(`aria-label="chat.changedFiles.diff: ${path}"`));
+  }
+  assert.ok(!skillOnlyHtml.includes(`aria-label="chat.changedFiles.open: ${deletedSkillPath}"`));
+  assert.ok(!skillOnlyHtml.includes(">chat.changedFiles.review</button>"));
+
+  const workspacePath = "src/app.ts";
+  const mixedHtml = renderCard(modules, {
+    withActions: true,
+    fileCount: 2,
+    files: [
+      { path: skillPath, deleted: false },
+      { path: workspacePath, deleted: false },
+    ],
+  });
+  assert.ok(mixedHtml.includes(`aria-label="chat.changedFiles.open: ${skillPath}"`));
+  assert.ok(!mixedHtml.includes(`aria-label="chat.changedFiles.diff: ${skillPath}"`));
+  assert.ok(mixedHtml.includes(`aria-label="chat.changedFiles.diff: ${workspacePath}"`));
+  assert.ok(mixedHtml.includes(">chat.changedFiles.review</button>"));
 });

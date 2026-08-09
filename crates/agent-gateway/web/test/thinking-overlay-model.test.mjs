@@ -12,6 +12,10 @@ const componentSource = fs.readFileSync(
   new URL("../../../agent-ui/src/components/chat/ThinkingActivity.tsx", import.meta.url),
   "utf8",
 );
+const roundContentSource = fs.readFileSync(
+  new URL("../src/pages/chat/assistant-bubble/RoundContent.tsx", import.meta.url),
+  "utf8",
+);
 
 test("thinking overlay placement is upward and narrow-safe", () => {
   const above = resolveThinkingOverlayPlacement(
@@ -36,9 +40,19 @@ test("keeps a renderable overlay inside an extremely narrow viewport", () => {
   assert.ok(placement.left + placement.width <= 8);
 });
 
-test("thinking details use a portal overlay instead of inline collapse", () => {
-  assert.match(componentSource, /createPortal/);
-  assert.match(componentSource, /role="dialog"/);
-  assert.match(componentSource, /className="fixed/);
-  assert.doesNotMatch(componentSource, /LazyCollapse/);
+test("thinking details use inline collapse instead of a portal overlay", () => {
+  assert.match(componentSource, /open\?: boolean;/);
+  assert.match(componentSource, /<LazyCollapse open=\{isOpen\}>/);
+  assert.match(componentSource, /userInteractedRef/);
+  assert.doesNotMatch(componentSource, /createPortal/);
+  assert.doesNotMatch(componentSource, /role="dialog"/);
+  assert.doesNotMatch(componentSource, /thinkingOverlayModel/);
+});
+
+test("WebUI transcript forwards live thinking auto-open into the shared collapse", () => {
+  assert.match(roundContentSource, /const autoOpenThinking = isLive \? Boolean\(isActive && thinkingOpen\) : false;/);
+  assert.match(
+    roundContentSource,
+    /open=\{autoOpenThinking && block\.key === latestThinkingKey\}/,
+  );
 });

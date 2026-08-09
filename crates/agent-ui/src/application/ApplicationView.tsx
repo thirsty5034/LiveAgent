@@ -80,7 +80,13 @@ export function ApplicationView(props: ApplicationViewProps) {
       ...headerProps
     } = chat;
     content = (
-      <div {...containerProps} className={containerProps?.className}>
+      <div
+        {...containerProps}
+        className={cn(
+          "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+          containerProps?.className,
+        )}
+      >
         <div className={headerClassName}>
           <ChatHeader {...headerProps} settings={settings} />
           {headerOverlay}

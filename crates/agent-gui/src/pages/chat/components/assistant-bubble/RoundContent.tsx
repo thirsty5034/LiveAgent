@@ -89,6 +89,7 @@ export const RoundBlockContent = memo(function RoundBlockContent(props: {
     content = (
       <ThinkingActivity
         text={block.text}
+        open={isRunning}
         isRunning={isRunning}
         renderMode={renderMode}
         workdir={workdir}
