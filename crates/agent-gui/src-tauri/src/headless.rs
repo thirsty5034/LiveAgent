@@ -467,6 +467,13 @@ pub async fn dispatch(state: &HeadlessState, cmd: &str, args: Value) -> Result<V
             Err(e) => Err(HeadlessError::Business(e)),
         }
     },
+    "settings_save_model_failover" => {
+        let payload_v: Value = take_arg(&mut args, "payload")?;
+        match crate::commands::settings::settings_save_model_failover(payload_v).await {
+            Ok(v) => to_value(v),
+            Err(e) => Err(HeadlessError::Business(e)),
+        }
+    },
     "settings_save_agents" => {
         let payload_v: Value = take_arg(&mut args, "payload")?;
         match crate::commands::settings::settings_save_agents(payload_v).await {

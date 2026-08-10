@@ -446,6 +446,13 @@ pub async fn settings_save_memory(
 }
 
 #[tauri::command]
+pub async fn settings_save_model_failover(
+    payload: Value,
+) -> Result<(), String> {
+    crate::commands::settings::settings_save_model_failover(payload).await
+}
+
+#[tauri::command]
 pub async fn settings_save_agents(
     payload: Value,
 ) -> Result<(), String> {

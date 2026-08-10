@@ -917,6 +917,21 @@
   "attr": "#[tauri::command]",
   "file": "config/settings/commands.rs",
   "module": "settings",
+  "name": "settings_save_model_failover",
+  "is_async": true,
+  "params": [
+   {
+    "name": "payload",
+    "type": "Value"
+   }
+  ],
+  "ret": "Result<(), String>",
+  "line": 86
+ },
+ {
+  "attr": "#[tauri::command]",
+  "file": "config/settings/commands.rs",
+  "module": "settings",
   "name": "settings_save_agents",
   "is_async": true,
   "params": [
