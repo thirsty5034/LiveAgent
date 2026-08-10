@@ -69,6 +69,17 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
     return tauriInvoke<T>(cmd, args as never);
   }
 
+  // Headless browser has no native folder picker. `system_pick_folder` is used
+  // both by "打开本地文件夹" (open workspace folder) and the clone modal's
+  // "选择文件夹" (choose parent dir). Instead of silently returning the
+  // initial workdir (the previous headless behavior, which made the modal just
+  // close with no visible result), prompt for an absolute path in the browser.
+  // The headless server still validates the path exists and is a directory.
+  if (cmd === "system_pick_folder") {
+    const initial = typeof args?.initial_workdir === "string" ? args.initial_workdir : "";
+    return (await promptFolderPathInBrowser(initial)) as T;
+  }
+
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(`${resolveHeadlessBaseUrl()}/api/invoke`, {
@@ -297,4 +308,122 @@ export function homeDir(): Promise<string> {
     return Promise.resolve("");
   }
   return tauriHomeDir();
+}
+
+// ---------------------------------------------------------------------------
+// Headless folder picker (browser prompt). The desktop runtime opens a native
+// OS directory picker for `system_pick_folder`; in a plain browser there is no
+// such API, so we show a small modal asking for an absolute path on the server.
+// The headless server re-validates the path (exists + is a directory) and
+// surfaces an error toast on failure.
+// ---------------------------------------------------------------------------
+
+function promptFolderPathInBrowser(initialPath: string): Promise<string | null> {
+  if (typeof window === "undefined" || typeof document === "undefined" || !document.body) {
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className =
+      "fixed inset-0 z-[200] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", "选择工作目录");
+
+    const panel = document.createElement("form");
+    panel.className =
+      "relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-border/70 bg-background shadow-2xl";
+
+    const header = document.createElement("div");
+    header.className = "border-b border-border/60 px-5 py-4";
+
+    const title = document.createElement("div");
+    title.className = "text-base font-semibold text-foreground";
+    title.textContent = "选择工作目录";
+
+    const description = document.createElement("div");
+    description.className = "mt-1 text-xs text-muted-foreground";
+    description.textContent =
+      "浏览器无法直接打开系统目录选择器。请输入服务器上要添加为工作空间的绝对目录路径。";
+
+    const body = document.createElement("div");
+    body.className = "space-y-2 px-5 py-5";
+
+    const label = document.createElement("label");
+    label.className = "block text-xs font-medium text-muted-foreground";
+    label.htmlFor = "agent-gui-browser-workdir-path";
+    label.textContent = "目录路径";
+
+    const input = document.createElement("input");
+    input.id = "agent-gui-browser-workdir-path";
+    input.className =
+      "h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/20";
+    input.placeholder = "/path/to/project";
+    input.type = "text";
+    input.value = initialPath;
+
+    const footer = document.createElement("div");
+    footer.className =
+      "flex flex-col-reverse gap-2 border-t border-border/60 bg-muted/20 px-5 py-4 sm:flex-row sm:justify-end";
+
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className =
+      "inline-flex h-9 items-center justify-center rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto";
+    cancelButton.textContent = "取消";
+
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "submit";
+    confirmButton.className =
+      "inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 sm:w-auto";
+    confirmButton.disabled = true;
+    confirmButton.textContent = "确认";
+
+    let closed = false;
+
+    const cleanup = (value: string | null) => {
+      if (closed) return;
+      closed = true;
+      window.removeEventListener("keydown", handleKeyDown);
+      overlay.remove();
+      resolve(value);
+    };
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cleanup(null);
+      }
+    }
+
+    input.addEventListener("input", () => {
+      confirmButton.disabled = input.value.trim().length === 0;
+    });
+    cancelButton.addEventListener("click", () => cleanup(null));
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        cleanup(null);
+      }
+    });
+    panel.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = input.value.trim();
+      if (value) {
+        cleanup(value);
+      }
+    });
+    window.addEventListener("keydown", handleKeyDown);
+
+    header.append(title, description);
+    body.append(label, input);
+    footer.append(cancelButton, confirmButton);
+    panel.append(header, body, footer);
+    overlay.append(panel);
+    document.body.append(overlay);
+    window.requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  });
 }
