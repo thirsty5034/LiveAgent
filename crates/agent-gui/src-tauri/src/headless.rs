@@ -145,7 +145,12 @@ fn to_value<T: serde::Serialize>(v: T) -> Result<Value, HeadlessError> {
 
 // ---- Command dispatch (manifest-verified, see scripts/verify_headless.py) ----
 
-pub async fn dispatch(state: &HeadlessState, cmd: &str, args: Value) -> Result<Value, HeadlessError> {
+pub async fn dispatch(
+    state: &HeadlessState,
+    cmd: &str,
+    args: Value,
+    request_origin: Option<String>,
+) -> Result<Value, HeadlessError> {
     let mut args = args;
     match cmd {
         // ===== app =====
@@ -1974,9 +1979,16 @@ pub async fn dispatch(state: &HeadlessState, cmd: &str, args: Value) -> Result<V
         // BFF 模式：反代路由挂在主 HTTP 服务上（/proxy/*、/image-proxy），
         // 前端直接把请求发到主服务端口，由服务端转发上游。token 沿用本地反代
         // 的随机 token，/proxy handler 按同一 token 校验。
+        //
+        // baseUrl 必须与「当前页面来源」保持一致，否则从域名/反向代理入口访问时
+        // 前端会拿着硬编码的 127.0.0.1 反代地址发起跨源请求，被 CORS 拦截
+        // （https 页面 -> http://127.0.0.1 也会触发混合内容/预检失败）。
+        // 有浏览器 Origin 头（同一请求里 /api/invoke 由页面发出）则用其来源；
+        // 否则回退到启动时默认的 loopback 地址（桌面/本机 curl 场景）。
         let info = crate::services::proxy::proxy_get_server_info(&state.proxy_server);
+        let base_url = request_origin.unwrap_or_else(|| state.proxy_base_url.clone());
         to_value(serde_json::json!({
-            "baseUrl": state.proxy_base_url,
+            "baseUrl": base_url,
             "token": info.token,
         }))
     },
@@ -2304,13 +2316,31 @@ struct InvokeRequest {
     args: Option<Value>,
 }
 
+/// From the incoming /api/invoke request headers, derive the browser page origin
+/// that should be used as the proxy baseUrl. Browsers always send an `Origin`
+/// header on POST fetches (this /api/invoke path), so it reliably reflects the
+/// actual page source — whether loopback IP, LAN IP, or public domain.
+///
+/// Returns None when there is no usable Origin (desktop/curl callers), in which
+/// case the caller falls back to the startup default loopback baseUrl.
+fn request_origin_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
+        .filter(|s| !s.is_empty())
+}
+
 async fn invoke_handler(
     AxumState(state): AxumState<HeadlessState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<InvokeRequest>,
 ) -> Json<Value> {
+    let request_origin = request_origin_from_headers(&headers);
     let t0 = Instant::now();
     let args = req.args.unwrap_or(Value::Null);
-    let result = dispatch(&state, &req.cmd, args).await;
+    let result = dispatch(&state, &req.cmd, args, request_origin).await;
     let elapsed_ms = t0.elapsed().as_millis();
     match result {
         Ok(value) => {
