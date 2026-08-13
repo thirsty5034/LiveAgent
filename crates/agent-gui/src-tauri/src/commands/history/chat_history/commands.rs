@@ -416,7 +416,7 @@ pub(crate) async fn chat_history_set_cwd_inner(
     id: String,
     cwd: String,
 ) -> Result<ChatHistorySummary, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::compat::async_runtime::spawn_blocking(move || {
         let conn = open_db()?;
         set_chat_history_cwd_sync(&conn, &id, &cwd)
     })
@@ -424,11 +424,10 @@ pub(crate) async fn chat_history_set_cwd_inner(
     .map_err(|e| format!("chat_history_set_cwd join 失败：{e}"))?
 }
 
-#[tauri::command]
 pub async fn chat_history_set_cwd(
     id: String,
     cwd: String,
-    gateway_controller: tauri::State<'_, Arc<GatewayController>>,
+    gateway_controller: &Arc<GatewayController>,
 ) -> Result<ChatHistorySummary, String> {
     let summary = chat_history_set_cwd_inner(id, cwd).await?;
     gateway_controller

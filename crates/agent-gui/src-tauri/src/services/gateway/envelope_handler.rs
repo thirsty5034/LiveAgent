@@ -322,7 +322,7 @@ impl GatewayController {
             }
             Some(proto::gateway_envelope::Payload::HistorySetCwd(request)) => {
                 let controller = Arc::clone(self);
-                tauri::async_runtime::spawn(async move {
+                crate::compat::async_runtime::spawn(async move {
                     let result = match gateway_bridge::handle_history_set_cwd(request).await {
                         Ok(response) => {
                             if let Some(conversation) = response.conversation.as_ref() {

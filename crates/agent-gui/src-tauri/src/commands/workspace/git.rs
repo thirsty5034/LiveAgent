@@ -3680,7 +3680,6 @@ pub async fn git_create_branch(
     .map_err(|error| format!("git_create_branch join 失败：{error}"))?
 }
 
-#[tauri::command(rename_all = "snake_case")]
 pub async fn git_create_worktree(
     workdir: String,
     branch: Option<String>,
@@ -3923,7 +3922,6 @@ pub async fn git_delete_branch(
         .map_err(|error| format!("git_delete_branch join 失败：{error}"))?
 }
 
-#[tauri::command(rename_all = "snake_case")]
 pub async fn git_remove_worktree(
     workdir: String,
     worktree_path: String,
