@@ -1,4 +1,4 @@
-import type { PendingUploadedFile } from "./chat/messages/uploadedFiles";
+import type { PendingUploadedFile } from "@liveagent/ui/lib/chat/uploadedFiles";
 import { resolveHeadlessBaseUrl } from "./tauriBridge";
 
 type ImportReadableFilesResponse = {

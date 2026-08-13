@@ -33,8 +33,8 @@ import {
   Info,
   Loader2,
   X,
-} from "../../../components/icons";
-import { DEFAULT_LOCALE, type Locale, t as translate } from "../../../i18n/config";
+} from "@liveagent/ui/components/IconSet";
+import { DEFAULT_LOCALE, type Locale, t as translate } from "@liveagent/ui/i18n/index";
 
 type FsDirEntry = {
   path: string;
