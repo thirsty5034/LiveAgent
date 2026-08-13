@@ -1121,7 +1121,7 @@ mod tests {
         };
         let loaded = load_system(&conn).expect("load system");
 
-        assert_eq!(row_count, 10);
+        assert_eq!(row_count, 11);
         assert_eq!(
             keys,
             vec![
@@ -1133,6 +1133,7 @@ mod tests {
                 SYSTEM_SYSTEM_PROXY_KEY.to_string(),
                 SYSTEM_TOOL_POLICIES_KEY.to_string(),
                 SYSTEM_WORKDIR_KEY.to_string(),
+                SYSTEM_WORKSPACE_PROJECT_GROUPS_KEY.to_string(),
                 SYSTEM_WORKSPACE_PROJECTS_KEY.to_string(),
                 SYSTEM_WORKSPACE_RESOURCE_SETTINGS_KEY.to_string(),
             ]
@@ -1149,6 +1150,7 @@ mod tests {
                 "systemProxy": default_system_proxy_json(),
                 "workdir": default_workdir.clone(),
                 "toolPolicies": { "Bash": "ask", "server:docs-mcp": "deny" },
+                "workspaceProjectGroups": null,
                 "workspaceProjects": [
                     {
                         "id": DEFAULT_WORKSPACE_PROJECT_ID,
@@ -1188,6 +1190,49 @@ mod tests {
         assert_eq!(
             loaded.get(SYSTEM_ARCHIVED_WORKSPACE_PROJECT_PATHS_KEY),
             Some(&json!(["/tmp/project-a"]))
+        );
+    }
+
+    #[test]
+    fn save_system_round_trips_workspace_project_groups() {
+        let mut conn = open_memory_db();
+        save_system_with_default_workdir(
+            &mut conn,
+            json!({
+                "executionMode": "tools",
+                "workdir": "/tmp/liveagent-default-project",
+                "workspaceProjectGroups": [
+                    {
+                        "id": "g1",
+                        "name": "LiveAgent",
+                        "projectPaths": ["/tmp/repo", "/tmp/wt"],
+                        "sourceProjectPath": "/tmp/repo",
+                        "collapsed": true,
+                        "createdAt": 100,
+                        "updatedAt": 100
+                    }
+                ]
+            }),
+            "/tmp/liveagent-default-project",
+        )
+        .expect("save system");
+
+        let loaded = load_system(&conn)
+            .expect("load system")
+            .expect("system settings");
+        assert_eq!(
+            loaded.get(SYSTEM_WORKSPACE_PROJECT_GROUPS_KEY),
+            Some(&json!([
+                {
+                    "id": "g1",
+                    "name": "LiveAgent",
+                    "projectPaths": ["/tmp/repo", "/tmp/wt"],
+                    "sourceProjectPath": "/tmp/repo",
+                    "collapsed": true,
+                    "createdAt": 100,
+                    "updatedAt": 100
+                }
+            ]))
         );
     }
 
@@ -1403,6 +1448,7 @@ mod tests {
                 "systemProxy": default_system_proxy_json(),
                 "workdir": "/tmp/liveagent-default-project",
                 "toolPolicies": null,
+                "workspaceProjectGroups": null,
                 "workspaceProjects": [
                     {
                         "id": DEFAULT_WORKSPACE_PROJECT_ID,
@@ -1455,6 +1501,7 @@ mod tests {
                 "systemProxy": default_system_proxy_json(),
                 "workdir": "/tmp/liveagent-default-project",
                 "toolPolicies": null,
+                "workspaceProjectGroups": null,
                 "workspaceProjects": [
                     {
                         "id": DEFAULT_WORKSPACE_PROJECT_ID,

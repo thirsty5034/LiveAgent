@@ -60,6 +60,7 @@ import {
   HistoryPinRequestSchema,
   HistoryPrefixRequestSchema,
   HistoryRenameRequestSchema,
+  HistorySetCwdRequestSchema,
   HistoryShareGetRequestSchema,
   HistoryShareSetRequestSchema,
   HistoryWorkdirsRequestSchema,
@@ -542,6 +543,14 @@ function agentRequestPayload(type: string, body: J): GatewayEnvelope["payload"] 
           isPinned: bool(body.is_pinned),
         }),
       };
+    case "history.set_cwd":
+      return {
+        case: "historySetCwd",
+        value: create(HistorySetCwdRequestSchema, {
+          conversationId: trimStr(body.conversation_id),
+          cwd: trimStr(body.cwd),
+        }),
+      };
     case "history.share.get":
       return {
         case: "historyShareGet",
@@ -575,6 +584,7 @@ function agentRequestPayload(type: string, body: J): GatewayEnvelope["payload"] 
           baseUrl: trimStr(body.base_url),
           apiKey: trimStr(body.api_key),
           useSystemProxy: bool(body.use_system_proxy),
+          modelsUrl: trimStr(body.models_url),
         }),
       };
     case "provider.usage.query":
@@ -1010,6 +1020,7 @@ function decodeAgentResponse(envelope: AgentEnvelope, options: { agentOnline: bo
     case "historyRenameResp":
     case "historyBranchResp":
     case "historyPinResp":
+    case "historySetCwdResp":
       if (!payload.value.conversation) {
         frameError("unexpected agent response");
       }

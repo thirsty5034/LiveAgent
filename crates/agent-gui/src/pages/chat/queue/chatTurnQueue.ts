@@ -1,10 +1,19 @@
 import type { MentionComposerDraft } from "@liveagent/ui/components/chat/MentionComposer";
-import type { PendingUploadedFile } from "../../../lib/chat/messages/uploadedFiles";
+
+export type {
+  ChatQueueItemDetail,
+  ChatQueueItemSummary,
+  ChatQueueSnapshot,
+} from "@liveagent/ui/contracts/chatQueue";
+
+import type { PendingUploadedFile } from "@liveagent/ui/lib/chat/uploadedFiles";
 import type { ChatRuntimeControls, ExecutionMode } from "../../../lib/settings";
 import type {
   GatewayChatRuntimeControlsEvent,
   GatewaySelectedModelEvent,
 } from "../gateway/gatewayBridgeTypes";
+
+export { queuedChatTurnHasContent } from "@liveagent/ui/lib/chat/queuedChatTurn";
 
 export type QueuedGatewayChatRequest = {
   requestId: string;
@@ -25,26 +34,6 @@ export type QueuedChatTurn = {
   runtimeControls: ChatRuntimeControls;
   createdAt: number;
   gatewayRequest?: QueuedGatewayChatRequest;
-};
-
-export type ChatQueueItemSummary = {
-  id: string;
-  previewText: string;
-  fileCount: number;
-  createdAt: number;
-  source: "gui" | "webui";
-  editable: boolean;
-};
-
-export type ChatQueueSnapshot = {
-  conversationId: string;
-  revision: number;
-  items: ChatQueueItemSummary[];
-};
-
-export type ChatQueueItemDetail = ChatQueueItemSummary & {
-  draftJson: string;
-  uploadedFilesJson: string;
 };
 
 export type QueuedChatTurnInput = Omit<QueuedChatTurn, "createdAt" | "id"> & {
@@ -72,13 +61,6 @@ export function createQueuedChatTurn(input: QueuedChatTurnInput): QueuedChatTurn
     createdAt,
     gatewayRequest: input.gatewayRequest ? { ...input.gatewayRequest } : undefined,
   };
-}
-
-export function queuedChatTurnHasContent(
-  draft: MentionComposerDraft | null | undefined,
-  uploadedFiles: readonly PendingUploadedFile[],
-): draft is MentionComposerDraft {
-  return Boolean(draft && (!draft.isEmpty || draft.text.trim() || uploadedFiles.length > 0));
 }
 
 export function buildQueuedChatTurnPreview(draft: MentionComposerDraft) {

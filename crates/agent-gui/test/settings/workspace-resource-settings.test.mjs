@@ -7,6 +7,18 @@ const sharedDrawer = readFileSync(
   new URL("../../../agent-ui/src/components/chat/WorkspaceResourceSettingsDrawer.tsx", import.meta.url),
   "utf8",
 );
+const sharedResourceTabs = readFileSync(
+  new URL("../../../agent-ui/src/components/resources/ResourceTabsList.tsx", import.meta.url),
+  "utf8",
+);
+const sharedResourceCard = readFileSync(
+  new URL("../../../agent-ui/src/components/resources/ResourceSelectionCard.tsx", import.meta.url),
+  "utf8",
+);
+const sharedSheet = readFileSync(
+  new URL("../../../agent-ui/src/components/ui/sheet.tsx", import.meta.url),
+  "utf8",
+);
 const sharedSidebar = readFileSync(
   new URL("../../../agent-ui/src/components/chat/ChatHistorySidebar.tsx", import.meta.url),
   "utf8",
@@ -20,6 +32,14 @@ const guiWorkspaceRemoval = readFileSync(
   new URL("../../src/pages/chat/workspace/useWorkspaceProjectRemoval.tsx", import.meta.url),
   "utf8",
 );
+const sharedWorkspaceRemoval = readFileSync(
+  new URL("../../../agent-ui/src/lib/workspaceProjectRemoval.ts", import.meta.url),
+  "utf8",
+);
+const sharedWorkspaceRemovalHook = readFileSync(
+  new URL("../../../agent-ui/src/lib/useWorkspaceProjectRemoval.tsx", import.meta.url),
+  "utf8",
+);
 const webGatewayApp = readFileSync(
   new URL("../../../agent-gateway/web/src/app/GatewayApp.tsx", import.meta.url),
   "utf8",
@@ -28,8 +48,8 @@ const sharedSkillsHub = readFileSync(
   new URL("../../../agent-ui/src/pages/skills-hub/SkillsHubPage.tsx", import.meta.url),
   "utf8",
 );
-const sharedMcpHub = readFileSync(
-  new URL("../../../agent-ui/src/pages/mcp-hub/McpServersForm.tsx", import.meta.url),
+const sharedMcpServerCard = readFileSync(
+  new URL("../../../agent-ui/src/pages/mcp-hub/McpServerCard.tsx", import.meta.url),
   "utf8",
 );
 
@@ -37,9 +57,26 @@ test("workspace resources use one entry and one combined settings drawer", () =>
   assert.match(sharedSidebar, /chat\.workspaceResources/);
   assert.match(sharedSidebar, /onConfigureProjectResources\(project\)/);
   assert.match(sharedDrawer, /\["inherit", "custom", "off"\]/);
-  assert.match(sharedDrawer, /\["skills", "mcp"\]/);
-  assert.match(sharedDrawer, /CLAWHUB_CATEGORY_SLUGS/);
-  assert.match(sharedDrawer, /ResourceActivationSwitch/);
+  assert.match(sharedDrawer, /value: "skills"/);
+  assert.match(sharedDrawer, /value: "mcp"/);
+  assert.match(sharedDrawer, /<ResourceTabsList/);
+  assert.match(sharedDrawer, /<StoreCategoryChips/);
+  assert.match(sharedDrawer, /<Input/);
+  assert.match(sharedDrawer, /<ResourceSelectionCard/);
+  assert.match(sharedDrawer, /getMcpTransportMeta/);
+  assert.match(sharedDrawer, /<SheetPopup[\s\S]*variant="inset"/);
+  assert.match(sharedDrawer, /<SheetHeader[\s\S]*<SheetTitle/);
+  assert.match(sharedDrawer, /<SheetPanel/);
+  assert.match(sharedDrawer, /<SheetFooter/);
+  assert.match(sharedDrawer, /<SheetClose render=\{<Button variant="outline"/);
+  assert.match(sharedResourceTabs, /<TabsList[\s\S]*<TabsTrigger/);
+  assert.match(sharedResourceCard, /ResourceActivationSwitch/);
+  assert.match(sharedSheet, /export const SheetViewport/);
+  assert.match(sharedSheet, /export const SheetPopup/);
+  assert.match(sharedSheet, /export const SheetPanel/);
+  assert.match(sharedSheet, /SheetPopup as SheetContent/);
+  assert.doesNotMatch(sharedDrawer, /<input|<select/);
+  assert.doesNotMatch(sharedDrawer, /createPortal|role="dialog"/);
   assert.doesNotMatch(sharedDrawer, /McpImportView|McpRegistryBrowser|SkillsStoreView/);
 });
 
@@ -55,12 +92,15 @@ test("chat runtime resolves and snapshots workspace resources from the effective
 });
 
 test("workspace and resource deletion paths clear workspace-scoped references", () => {
-  assert.match(guiWorkspaceRemoval, /resetWorkspaceResourceSettings\(nextSettings, pathKey\)/);
-  assert.match(webGatewayApp, /resetWorkspaceResourceSettings\(nextSettings, pathKey\)/);
+  assert.match(guiWorkspaceRemoval, /useSharedWorkspaceProjectRemoval/);
+  assert.match(webGatewayApp, /useWorkspaceProjectSettingsActions/);
+  assert.match(webGatewayApp, /useWorkspaceProjectDeletion/);
+  assert.match(sharedWorkspaceRemovalHook, /useWorkspaceProjectSettingsActions/);
+  assert.match(sharedWorkspaceRemoval, /resetWorkspaceResourceSettings\(nextSettings, pathKey\)/);
   assert.match(sharedSkillsHub, /removeWorkspaceResourceReferences\(/);
   assert.match(sharedSkillsHub, /skillNames: \[skillName\]/);
-  assert.match(sharedMcpHub, /removeWorkspaceResourceReferences\(/);
-  assert.match(sharedMcpHub, /mcpServerIds: \[serverConfig\.id\]/);
+  assert.match(sharedMcpServerCard, /removeWorkspaceResourceReferences\(/);
+  assert.match(sharedMcpServerCard, /mcpServerIds: \[server\.id\]/);
   assert.match(sendRuntime, /change\.action !== "delete"/);
   assert.match(sendRuntime, /skillNames: change\.names/);
   assert.match(sendRuntime, /op\.kind === "remove"/);

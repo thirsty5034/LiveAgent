@@ -8,7 +8,7 @@ const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const loader = createWebModuleLoader({ rootDir });
 const { BUILTIN_TOOL_CATALOG } = loader.loadModule("@liveagent/ui/lib/tools/builtinToolCatalog.ts");
 const { groupRoundBlocks, isBuiltinShareToolName } = loader.loadModule(
-  "src/pages/chat/assistant-bubble/assistantBubbleUtils.ts",
+  "@liveagent/ui/components/chat/assistant-bubble/assistantBubbleUtils.ts",
 );
 
 test("shared history recognizes every catalog tool as builtin", () => {
@@ -35,7 +35,7 @@ test("ordinary tool activity keeps one group identity as later tools append", ()
 });
 
 test("special tool result updates preserve their direct activity identity", () => {
-  for (const name of ["TodoWrite", "AskUserQuestion", "Image", "Agent"]) {
+  for (const name of ["TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion", "Image", "Agent"]) {
     const pendingItem = {
       toolCall: { type: "toolCall", id: `call-${name}`, name, arguments: {} },
     };
@@ -71,13 +71,13 @@ test("hosted search activity keeps one group identity as later searches append",
   assert.equal(appended[0].key, first[0].key);
 });
 
-test("TodoWrite stays standalone so transcript filtering cannot hide ordinary tools", () => {
+test("task tools stay standalone so transcript filtering cannot hide ordinary tools", () => {
   const tool = (id, name) => ({
     kind: "tool",
     item: { toolCall: { type: "toolCall", id, name, arguments: {} } },
   });
   const grouped = groupRoundBlocks([
-    tool("todo-1", "TodoWrite"),
+    tool("task-1", "TaskCreate"),
     tool("read-1", "Read"),
     tool("read-2", "Read"),
   ]);
@@ -86,7 +86,7 @@ test("TodoWrite stays standalone so transcript filtering cannot hide ordinary to
     grouped.map((block) => block.kind),
     ["tool", "toolGroup"],
   );
-  assert.equal(grouped[0].item.toolCall.name, "TodoWrite");
+  assert.equal(grouped[0].item.toolCall.name, "TaskCreate");
   assert.deepEqual(
     grouped[1].items.map((item) => item.toolCall.name),
     ["Read", "Read"],

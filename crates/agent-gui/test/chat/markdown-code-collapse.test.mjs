@@ -39,7 +39,7 @@ function createMarkdownModule(expanded) {
       "react-dom": { createPortal(children) { return children; } },
       "@liveagent/ui/i18n/index": { useLocale() { return { t: (key) => key }; } },
       "../lib/shared/utils": { cn: (...parts) => parts.filter(Boolean).join(" ") },
-      "@liveagent/app/components/icons": {
+      "@liveagent/ui/components/IconSet": {
         Check: "Check",
         ChevronDown: "ChevronDown",
         ChevronUp: "ChevronUp",
@@ -48,6 +48,7 @@ function createMarkdownModule(expanded) {
         X: "X",
       },
       "./ui/button": { Button: "Button" },
+      "./ui/copy-button": { CopyButton: "CopyButton" },
     },
   });
   return loader.loadModule("@liveagent/ui/components/Markdown.tsx");

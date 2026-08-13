@@ -5,8 +5,16 @@ import test from "node:test";
 import { createWebModuleLoader } from "../../test/helpers/load-web-module.mjs";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const iconsPath = fileURLToPath(new URL("../src/components/icons/index.ts", import.meta.url));
+const iconsPath = fileURLToPath(
+  new URL("../../../agent-ui/src/components/IconSet.tsx", import.meta.url),
+);
 const utilsPath = fileURLToPath(new URL("../src/lib/shared/utils.ts", import.meta.url));
+const localeContextPath = fileURLToPath(
+  new URL("../../../agent-ui/src/i18n/LocaleContext.tsx", import.meta.url),
+);
+const taskProgressIndicatorPath = fileURLToPath(
+  new URL("../../../agent-ui/src/components/chat/TaskProgressIndicator.tsx", import.meta.url),
+);
 
 const labels = {
   title: "Task progress",
@@ -96,17 +104,37 @@ function createIndicatorHarness() {
 }
 
 function createSnapshot(overrides = {}) {
-  const todos =
-    overrides.todos ??
+  const tasks =
+    overrides.tasks ??
     [
-      { content: "Inspect", status: "completed", activeForm: "Inspecting" },
-      { content: "Implement", status: "in_progress", activeForm: "Implementing" },
-      { content: "Verify", status: "pending", activeForm: "Verifying" },
+      {
+        id: "1",
+        subject: "Inspect",
+        description: "Inspect completion criteria",
+        status: "completed",
+        activeForm: "Inspecting",
+      },
+      {
+        id: "2",
+        subject: "Implement",
+        description: "Implement completion criteria",
+        status: "in_progress",
+        activeForm: "Implementing",
+      },
+      {
+        id: "3",
+        subject: "Verify",
+        description: "Verify completion criteria",
+        status: "pending",
+        activeForm: "Verifying",
+      },
     ];
   return {
-    todos,
+    runId: "run-1",
+    revision: 3,
+    tasks,
     completedCount: 1,
-    totalCount: todos.length,
+    totalCount: tasks.length,
     currentStep: 2,
     state: "in_progress",
     ...overrides,
@@ -199,7 +227,15 @@ test("web renders props-only copy, progress semantics, and an absolute reduced-m
 test("web keeps task labels stable and scopes transition motion to the changed row status", () => {
   const indicator = createIndicatorHarness();
   const runningSnapshot = createSnapshot({
-    todos: [{ content: "Stable task", status: "in_progress", activeForm: "Changing label" }],
+    tasks: [
+      {
+        id: "stable",
+        subject: "Stable task",
+        description: "Stable completion criteria",
+        status: "in_progress",
+        activeForm: "Changing label",
+      },
+    ],
     completedCount: 0,
     totalCount: 1,
     currentStep: 1,
@@ -220,7 +256,15 @@ test("web keeps task labels stable and scopes transition motion to the changed r
 
   const completedTree = indicator.render({
     snapshot: createSnapshot({
-      todos: [{ content: "Stable task", status: "completed", activeForm: "Changed again" }],
+      tasks: [
+        {
+          id: "stable",
+          subject: "Stable task",
+          description: "Stable completion criteria",
+          status: "completed",
+          activeForm: "Changed again",
+        },
+      ],
       completedCount: 1,
       totalCount: 1,
       currentStep: 1,
@@ -303,7 +347,15 @@ test("web Escape closes while touch clicks toggle", () => {
 test("web shows pending, paused, and completed states without auto-dismissing completion", () => {
   const indicator = createIndicatorHarness();
   const pending = createSnapshot({
-    todos: [{ content: "Wait", status: "pending", activeForm: "Waiting" }],
+    tasks: [
+      {
+        id: "wait",
+        subject: "Wait",
+        description: "Wait completion criteria",
+        status: "pending",
+        activeForm: "Waiting",
+      },
+    ],
     completedCount: 0,
     totalCount: 1,
     currentStep: 1,
@@ -315,11 +367,17 @@ test("web shows pending, paused, and completed states without auto-dismissing co
     /Paused/,
   );
 
-  const completedTodos = [
-    { content: "Done", status: "completed", activeForm: "Finishing" },
+  const completedTasks = [
+    {
+      id: "done",
+      subject: "Done",
+      description: "Done completion criteria",
+      status: "completed",
+      activeForm: "Finishing",
+    },
   ];
   const completed = createSnapshot({
-    todos: completedTodos,
+    tasks: completedTasks,
     completedCount: 1,
     totalCount: 1,
     currentStep: 1,
@@ -327,4 +385,35 @@ test("web shows pending, paused, and completed states without auto-dismissing co
   });
   assert.match(treeText(indicator.render({ snapshot: completed })), /All completed/);
   assert.match(treeText(indicator.render({ snapshot: completed })), /All completed/);
+});
+
+test("web uses the shared localized task progress bar", () => {
+  const indicator = (props) => ({ type: "TaskProgressIndicator", props });
+  const translations = {
+    "chat.taskProgress.title": "Task progress",
+    "chat.taskProgress.step": "Step {current} of {total}",
+    "chat.taskProgress.completedCount": "completed",
+    "chat.taskProgress.running": "Running",
+    "chat.taskProgress.pending": "Pending",
+    "chat.taskProgress.paused": "Paused",
+    "chat.taskProgress.completed": "All completed",
+  };
+  const loader = createWebModuleLoader({
+    rootDir,
+    mocks: {
+      [localeContextPath]: {
+        useLocale: () => ({ t: (key) => translations[key] ?? key }),
+      },
+      [taskProgressIndicatorPath]: { TaskProgressIndicator: indicator },
+    },
+  });
+  const { TaskProgressBar } = loader.loadModule(
+    "@liveagent/ui/components/chat/TaskProgressBar.tsx",
+  );
+  const snapshot = createSnapshot();
+  const tree = TaskProgressBar({ snapshot, isConversationRunning: true });
+
+  assert.equal(tree.type, indicator);
+  assert.deepEqual(tree.props.labels, labels);
+  assert.equal(TaskProgressBar({ snapshot: null, isConversationRunning: false }), null);
 });

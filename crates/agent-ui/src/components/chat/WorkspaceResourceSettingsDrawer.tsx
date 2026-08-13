@@ -1,25 +1,49 @@
-import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
-import { Blend, Cable, Search, X } from "@liveagent/app/components/icons";
 import {
   type AppSettings,
   type WorkspaceProject,
   type WorkspaceResourceSettingsMode,
   workspaceProjectPathKey,
 } from "@liveagent/app/lib/settings";
-import { useLocale } from "@liveagent/ui/i18n/index";
-import { cn } from "@liveagent/ui/lib/shared/utils";
-import { isAlwaysEnabledSkillName, type SkillSummary } from "@liveagent/ui/lib/skills/index";
+import { Blend, Cable, Search } from "@liveagent/ui/components/IconSet";
+import { getMcpTransportMeta } from "@liveagent/ui/components/resources/McpTransportMeta";
+import { ResourceSelectionCard } from "@liveagent/ui/components/resources/ResourceSelectionCard";
+import { ResourceTabsList } from "@liveagent/ui/components/resources/ResourceTabsList";
+import { Badge } from "@liveagent/ui/components/ui/badge";
+import { Input } from "@liveagent/ui/components/ui/input";
 import {
-  CLAWHUB_CATEGORY_SLUGS,
+  Sheet,
+  SheetClose,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetPanel,
+  SheetPopup,
+  SheetTitle,
+} from "@liveagent/ui/components/ui/sheet";
+import { Tabs } from "@liveagent/ui/components/ui/tabs";
+import { useLocale } from "@liveagent/ui/i18n/index";
+import {
   type ClawHubCategorySlug,
   classifyClawHubSkill,
 } from "@liveagent/ui/lib/skills/clawHubCategories";
-import { ResourceActivationSwitch } from "../resources/ResourceActivationSwitch";
+import { isAlwaysEnabledSkillName, type SkillSummary } from "@liveagent/ui/lib/skills/index";
+import { useMemo, useState } from "react";
+import {
+  STORE_CATEGORY_ICONS,
+  StoreCategoryChips,
+  type StoreCategoryValue,
+} from "../../pages/skills-hub/SkillCategoryControls";
 import { Button } from "../ui/button";
 
 type ResourceTab = "skills" | "mcp";
-type SkillCategory = "all" | ClawHubCategorySlug;
+
+function isResourceTab(value: unknown): value is ResourceTab {
+  return value === "skills" || value === "mcp";
+}
+
+function isWorkspaceResourceMode(value: unknown): value is WorkspaceResourceSettingsMode {
+  return value === "inherit" || value === "custom" || value === "off";
+}
 
 function classifySkill(skill: Pick<SkillSummary, "name" | "description">): ClawHubCategorySlug[] {
   if (isAlwaysEnabledSkillName(skill.name)) return ["other"];
@@ -64,7 +88,7 @@ export function WorkspaceResourceSettingsDrawer(props: {
   );
   const [tab, setTab] = useState<ResourceTab>("skills");
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState<SkillCategory>("all");
+  const [category, setCategory] = useState<StoreCategoryValue>("all");
 
   const listedSkills = useMemo(() => {
     const rows: Array<{
@@ -83,14 +107,6 @@ export function WorkspaceResourceSettingsDrawer(props: {
     return rows;
   }, [mode, skillNames, skills, t]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
   const selectMode = (next: WorkspaceResourceSettingsMode) => {
     if (next === "custom" && mode !== "custom") {
       setSkillNames(new Set(globalSkillNames));
@@ -107,6 +123,17 @@ export function WorkspaceResourceSettingsDrawer(props: {
     });
   }, [category, listedSkills, query]);
 
+  const skillCategoryCounts = useMemo(() => {
+    const counts = new Map<StoreCategoryValue, number>();
+    counts.set("all", listedSkills.length);
+    for (const { skill } of listedSkills) {
+      for (const value of classifySkill(skill)) {
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [listedSkills]);
+
   const filteredMcp = useMemo(() => {
     const text = query.trim().toLowerCase();
     if (!text) return settings.mcp.servers;
@@ -120,50 +147,69 @@ export function WorkspaceResourceSettingsDrawer(props: {
   const readonly = mode !== "custom";
   const visibleSkillSelection = mode === "inherit" ? globalSkillNames : skillNames;
   const visibleMcpSelection = mode === "inherit" ? globalMcpIds : mcpServerIds;
+  const selectableSkills = listedSkills.filter(
+    ({ skill }) => !isAlwaysEnabledSkillName(skill.name),
+  );
+  const visibleSelectedSkillCount =
+    settings.skills.enabled && mode !== "off"
+      ? selectableSkills.filter(({ skill }) => visibleSkillSelection.has(skill.name)).length
+      : 0;
+  const visibleSelectedMcpCount =
+    mode !== "off"
+      ? settings.mcp.servers.filter(
+          (server) => server.enabled && visibleMcpSelection.has(server.id),
+        ).length
+      : 0;
 
-  return createPortal(
-    <div className="fixed inset-0 z-[120] flex justify-end" role="dialog" aria-modal="true">
-      <button
-        type="button"
-        className="skills-drawer-backdrop-enter absolute inset-0 bg-black/35 backdrop-blur-[2px]"
-        aria-label={t("window.close")}
-        onClick={onClose}
-      />
-      <aside className="skills-drawer-panel-enter relative flex h-full w-full max-w-[720px] flex-col border-l border-border/60 bg-background shadow-2xl">
-        <header className="flex items-start gap-3 border-b border-border/60 px-5 py-4">
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <SheetPopup
+        side="right"
+        variant="inset"
+        closeLabel={t("window.close")}
+        className="w-full sm:max-w-[720px]"
+      >
+        <SheetHeader className="flex-row items-start gap-3 border-b border-border px-5 py-4 pr-14">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/35">
             <Blend className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-[15px] font-semibold">{t("chat.workspaceResourcesTitle")}</h2>
-            <div className="mt-0.5 truncate text-xs text-muted-foreground">{project.name}</div>
-            <div className="truncate text-[11px] text-muted-foreground/75" title={project.path}>
-              {project.path}
-            </div>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose} title={t("window.close")}>
-            <X className="h-4 w-4" />
-          </Button>
-        </header>
-
-        <div className="border-b border-border/60 px-5 py-4">
-          <div className="grid grid-cols-3 gap-1 rounded-lg border border-border/50 bg-muted/25 p-1">
-            {(["inherit", "custom", "off"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => selectMode(value)}
-                className={cn(
-                  "h-9 rounded-md px-3 text-xs font-medium transition-colors",
-                  mode === value
-                    ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
+            <SheetTitle>{t("chat.workspaceResourcesTitle")}</SheetTitle>
+            <SheetDescription className="mt-1 min-w-0">
+              <span className="block truncate text-xs text-foreground/75">{project.name}</span>
+              <span
+                className="block truncate text-[11px] text-muted-foreground"
+                title={project.path}
               >
-                {t(`chat.workspaceResourcesMode${value[0].toUpperCase()}${value.slice(1)}`)}
-              </button>
-            ))}
+                {project.path}
+              </span>
+            </SheetDescription>
           </div>
+        </SheetHeader>
+
+        <div className="shrink-0 border-b border-border/60 px-5 py-4">
+          <Tabs
+            value={mode}
+            onValueChange={(value) => {
+              if (isWorkspaceResourceMode(value)) selectMode(value);
+            }}
+          >
+            <ResourceTabsList
+              value={mode}
+              items={(["inherit", "custom", "off"] as const).map((value) => ({
+                value,
+                label: t(`chat.workspaceResourcesMode${value[0].toUpperCase()}${value.slice(1)}`),
+              }))}
+              ariaLabel={t("chat.workspaceResourcesTitle")}
+              className="grid w-full grid-cols-3"
+              triggerClassName="w-full px-2 text-xs"
+            />
+          </Tabs>
           <p className="mt-2 text-[11px] text-muted-foreground">
             {mode === "inherit"
               ? t("chat.workspaceResourcesInheritHint")
@@ -173,93 +219,89 @@ export function WorkspaceResourceSettingsDrawer(props: {
           </p>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col px-5 py-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-lg border border-border/50 bg-muted/20 p-1">
-              {(["skills", "mcp"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => {
-                    setTab(value);
-                    setQuery("");
-                  }}
-                  className={cn(
-                    "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium",
-                    tab === value
-                      ? "bg-background shadow-sm ring-1 ring-border/60"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {value === "skills" ? (
-                    <Blend className="h-3.5 w-3.5" />
-                  ) : (
-                    <Cable className="h-3.5 w-3.5" />
-                  )}
-                  {value === "skills" ? "Skills" : "MCP"}
-                </button>
-              ))}
-            </div>
-            <div className="relative min-w-[12rem] flex-1">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.currentTarget.value)}
-                placeholder={t("chat.workspaceResourcesSearch")}
-                className="h-10 w-full rounded-lg border border-border/60 bg-background pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-foreground/10"
+        <SheetPanel className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-4">
+          <Tabs
+            value={tab}
+            onValueChange={(value) => {
+              if (!isResourceTab(value)) return;
+              setTab(value);
+              setQuery("");
+            }}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <ResourceTabsList
+                value={tab}
+                items={[
+                  {
+                    value: "skills",
+                    label: "Skills",
+                    icon: Blend,
+                    countLabel:
+                      listedSkills.length > 0
+                        ? `${visibleSelectedSkillCount}/${selectableSkills.length}`
+                        : null,
+                  },
+                  {
+                    value: "mcp",
+                    label: "MCP",
+                    icon: Cable,
+                    countLabel:
+                      settings.mcp.servers.length > 0
+                        ? `${visibleSelectedMcpCount}/${settings.mcp.servers.length}`
+                        : null,
+                  },
+                ]}
+                ariaLabel={t("chat.workspaceResourcesTitle")}
               />
+              <div className="relative min-w-[12rem] flex-1">
+                <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.currentTarget.value)}
+                  placeholder={t("chat.workspaceResourcesSearch")}
+                  className="h-10 rounded-full border-border bg-background pl-10 pr-4 text-sm shadow-none placeholder:text-muted-foreground"
+                />
+              </div>
             </div>
-          </div>
 
-          {tab === "skills" ? (
-            <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
-              {(["all", ...CLAWHUB_CATEGORY_SLUGS] as SkillCategory[]).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setCategory(value)}
-                  className={cn(
-                    "h-7 shrink-0 rounded-md border px-2.5 text-[11px]",
-                    category === value
-                      ? "border-foreground/20 bg-foreground/[0.07] text-foreground"
-                      : "border-border/50 text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {t(`settings.skillsStoreCategory${value[0].toUpperCase()}${value.slice(1)}`)}
-                </button>
-              ))}
-            </div>
-          ) : null}
+            {tab === "skills" ? (
+              <StoreCategoryChips
+                value={category}
+                counts={skillCategoryCounts}
+                onChange={setCategory}
+                className="mt-3"
+              />
+            ) : null}
 
-          <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-1">
-            <div className="space-y-2">
-              {tab === "skills"
-                ? filteredSkills.map(({ skill, missing }) => {
-                    const alwaysEnabled = isAlwaysEnabledSkillName(skill.name);
-                    const checked =
-                      settings.skills.enabled &&
-                      mode !== "off" &&
-                      (alwaysEnabled || visibleSkillSelection.has(skill.name));
-                    return (
-                      <div
-                        key={skill.name}
-                        className="flex items-center gap-3 rounded-lg border border-border/55 bg-background px-3.5 py-3"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium">{skill.name}</div>
-                          <div
-                            className={cn(
-                              "mt-0.5 line-clamp-2 text-xs text-muted-foreground",
-                              missing && "text-amber-600 dark:text-amber-300",
-                            )}
-                          >
-                            {skill.description}
-                          </div>
-                        </div>
-                        <ResourceActivationSwitch
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto px-0.5 pb-1 pr-1">
+              <div className="space-y-2">
+                {tab === "skills"
+                  ? filteredSkills.map(({ skill, missing }) => {
+                      const alwaysEnabled = isAlwaysEnabledSkillName(skill.name);
+                      const checked =
+                        settings.skills.enabled &&
+                        mode !== "off" &&
+                        (alwaysEnabled || visibleSkillSelection.has(skill.name));
+                      const categories = classifySkill(skill);
+                      const SkillIcon = STORE_CATEGORY_ICONS[categories[0] ?? "other"];
+                      return (
+                        <ResourceSelectionCard
+                          key={skill.name}
+                          title={skill.name}
+                          description={skill.description}
+                          icon={SkillIcon}
                           checked={checked}
                           disabled={readonly || alwaysEnabled || !settings.skills.enabled}
-                          label={skill.name}
+                          warning={missing}
+                          metadata={
+                            alwaysEnabled ? (
+                              <Badge variant="muted" className="h-5 px-1.5 text-[10px]">
+                                {t("settings.skillsAlwaysOn")}
+                              </Badge>
+                            ) : null
+                          }
                           onCheckedChange={(next) => {
                             const value = new Set(skillNames);
                             if (next) value.add(skill.name);
@@ -267,32 +309,35 @@ export function WorkspaceResourceSettingsDrawer(props: {
                             setSkillNames(value);
                           }}
                         />
-                      </div>
-                    );
-                  })
-                : filteredMcp.map((server) => {
-                    const checked =
-                      mode !== "off" && visibleMcpSelection.has(server.id) && server.enabled;
-                    return (
-                      <div
-                        key={server.id}
-                        className="flex items-center gap-3 rounded-lg border border-border/55 bg-background px-3.5 py-3"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="truncate text-sm font-medium">{server.id}</span>
-                            <span className="rounded border border-border/50 px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
-                              {server.transport}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                            {server.command || server.url || t("mcpHub.statusEmptyDesc")}
-                          </div>
-                        </div>
-                        <ResourceActivationSwitch
+                      );
+                    })
+                  : filteredMcp.map((server) => {
+                      const checked =
+                        mode !== "off" && visibleMcpSelection.has(server.id) && server.enabled;
+                      const { Icon: TransportIcon, label: transportLabel } = getMcpTransportMeta(
+                        server.transport,
+                      );
+                      return (
+                        <ResourceSelectionCard
+                          key={server.id}
+                          title={server.id}
+                          description={
+                            server.description ||
+                            server.command ||
+                            server.url ||
+                            t("mcpHub.statusEmptyDesc")
+                          }
+                          icon={TransportIcon}
                           checked={checked}
                           disabled={readonly || !server.enabled}
-                          label={server.id}
+                          metadata={
+                            <Badge
+                              variant="muted"
+                              className="h-5 px-1.5 text-[10px] uppercase tracking-wide"
+                            >
+                              {transportLabel}
+                            </Badge>
+                          }
                           onCheckedChange={(next) => {
                             const value = new Set(mcpServerIds);
                             if (next) value.add(server.id);
@@ -300,14 +345,14 @@ export function WorkspaceResourceSettingsDrawer(props: {
                             setMcpServerIds(value);
                           }}
                         />
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+              </div>
             </div>
-          </div>
-        </div>
+          </Tabs>
+        </SheetPanel>
 
-        <footer className="flex items-center justify-between gap-3 border-t border-border/60 px-5 py-4">
+        <SheetFooter className="flex-row items-center justify-between gap-3 border-t border-border px-5 py-4">
           <div className="text-xs text-muted-foreground">
             {mode === "custom"
               ? t("chat.workspaceResourcesSelected")
@@ -316,9 +361,7 @@ export function WorkspaceResourceSettingsDrawer(props: {
               : null}
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose}>
-              {t("chat.cancel")}
-            </Button>
+            <SheetClose render={<Button variant="outline" />}>{t("chat.cancel")}</SheetClose>
             <Button
               onClick={() =>
                 onSave({
@@ -331,9 +374,8 @@ export function WorkspaceResourceSettingsDrawer(props: {
               {t("workspaceEditor.save")}
             </Button>
           </div>
-        </footer>
-      </aside>
-    </div>,
-    document.body,
+        </SheetFooter>
+      </SheetPopup>
+    </Sheet>
   );
 }

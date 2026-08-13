@@ -43,9 +43,9 @@ Keep the active assistant turn structurally stable while thinking, tools, tool r
 - Final visual feedback removed Streamdown's trailing live-text caret in both clients. The caret could render as a standalone white bar and reserve an otherwise empty line between a completed text block and the next tool; activity progress is already communicated by the stable status tail, so the duplicate cue is no longer emitted.
 - Status width is now bounded through the complete flex chain: the desktop activity row occupies the transcript width, status wrappers allow shrinking and clip overflow, and the status text itself owns the ellipsis. WebUI applies the same footer constraint, so long tool summaries cannot widen either transcript.
 
-## TodoWrite compatibility
+## Task tool compatibility
 
-The task-progress PR worktree is based on a different stack and changes GUI `rowModel.ts` to hide all `TodoWrite` blocks. This task remains independent of that PR. A read-only `git apply --check` of this task's relevant projection patches against `codex/feat-task-progress-indicator-stacked` at `7fb096839d5fd423a981f384227bdd3a08876515` passed. No TodoWrite implementation was copied and no Git dependency was introduced.
+Task tools remain standalone render units, so hiding `TaskCreate`、`TaskUpdate`、`TaskList` cannot hide adjacent ordinary tools or alter their activity identity.
 
 ## Verification status
 
@@ -59,7 +59,7 @@ The task-progress PR worktree is based on a different stack and changes GUI `row
 - Focused activity/identity/scroll tests: passed, including 100 appended tools, stable live-to-settled keys, interleaved reasoning/tool/result order, and one-frame pin coalescing.
 - Mirrored live-caret regression tests assert that neither GUI nor WebUI round content requests a Markdown caret; both focused tests and both builds pass.
 - GUI/WebUI status-width regression tests assert the non-expanding container chain and full-width truncation target; focused tests, touched-file lint, both builds, Mirror Check, and diff hygiene pass.
-- Coverage audit follow-up: mirrored special-tool identity tests now cover `TodoWrite`, `AskUserQuestion`, `Image`, `Agent`, and hosted-search singleton-to-group stability. Gateway row tests now explicitly apply result B before result A, repeat result B, and assert the original A/B order, result ownership, error status, and outer assistant key remain stable. Focused rerun passed GUI 9/9 and WebUI 24/24.
+- Coverage audit follow-up: mirrored special-tool identity tests now cover `TaskCreate`、`TaskUpdate`、`TaskList`、`AskUserQuestion`、`Image`、`Agent`, and hosted-search singleton-to-group stability. Gateway row tests explicitly apply result B before result A, repeat result B, and assert the original A/B order, result ownership, error status, and outer assistant key remain stable.
 - GUI lint: 419 errors / 358 warnings / 9 infos versus baseline 428 / 358 / 9. A final targeted Biome check of all 14 touched GUI source files exited successfully with three existing warnings and no errors.
 - Gateway WebUI lint: 289 errors / 310 warnings / 10 infos versus baseline 296 / 310 / 10. A final targeted Biome check of all 11 touched WebUI source files exited successfully with 22 existing warnings and no errors.
 - Mirror Check: 122/122 passed.
@@ -102,7 +102,7 @@ All prompts below are read-only unless the row explicitly asks the user to press
 | Stop/cancel | GUI + WebUI | Send the stop prompt; after the long-running tool begins, press Stop once. | Running item becomes cancelled/aborted in place; no duplicate status row; turn settles once without a final jump. |
 | Retry | GUI + WebUI | Use the existing retry action on the failed turn exactly once. | A new attempt is represented without reordering the settled prior turn; repeated click is not duplicated. |
 | AskUserQuestion | GUI + WebUI | Send the question prompt; wait five seconds, select “继续”, submit once. | Pending card and surrounding activities do not move; answering resumes the same turn; duplicate submission is blocked. |
-| TodoWrite compatibility | GUI + WebUI | The twelve-step prompt creates and updates the complete TodoWrite list before every step. | Existing TodoWrite bubble/progress behavior remains available; hidden TodoWrite never splits adjacent ordinary tools or changes their identity. |
+| Task tool compatibility | GUI + WebUI | The twelve-step prompt creates tasks once and updates each by stable ID. | Hidden task tools never split adjacent ordinary tools or change their identity; the progress snapshot retains stable task IDs. |
 | Image | GUI + WebUI | Attach a small image and ask the agent to inspect its dimensions/read visible text, without editing files. | Image tool/activity stays at its original position as result arrives; preview/details still open. |
 | Hosted search | GUI + WebUI | Ask: “使用 hosted search 查找 LiveAgent 仓库主页，只返回标题和 URL。” | Search row updates in place and does not regroup neighboring shell/file tools. |
 | Subagent | GUI + WebUI | Use the parallel-subagent prompt. | Both subagent activities keep stable identity, progress/result details remain accessible. |
@@ -118,9 +118,9 @@ All prompts below are read-only unless the row explicitly asks the user to press
 ```text
 这是实时活动稳定性验收。不要修改任何文件，不要并行、合并、跳过或批量完成步骤。
 
-1. 首先调用 TodoWrite，一次性创建下面完整的 12 项任务，名称和顺序后续不得改变；只将第 1 项设为 in_progress，其余设为 pending。
-2. 每完成一项，必须立即重新调用 TodoWrite，提交完整 12 项列表：刚完成项设为 completed，下一项设为 in_progress，其余状态保持不变；一次只能完成一项。
-3. 每次 TodoWrite 更新后执行 Start-Sleep -Seconds 2，再执行下一项。
+1. 首先为下面 12 项工作分别调用 TaskCreate，并记录执行器返回的稳定 taskId；创建完成后用 TaskUpdate 将第 1 项设为 in_progress。
+2. 每完成一项，立即用 TaskUpdate 按 taskId 将刚完成项设为 completed、下一项设为 in_progress；不要重建或重排任务。
+3. 每次 TaskUpdate 后执行 Start-Sleep -Seconds 2，再执行下一项。
 4. 每项必须使用一次独立工具调用，严格串行：
    1) 获取当前工作目录
    2) 获取当前 Git 分支

@@ -56,8 +56,9 @@ test("codex provider normalization strips route suffixes and keeps only configur
   assert.equal(provider.baseUrl, "https://api.openai.com/v1");
   assert.equal(provider.apiKey, "key");
   assert.equal(provider.requestFormat, "openai-responses");
-  // OpenAI 缓存（稳定 prompt_cache_key）默认开启，可显式关闭。
+  // Codex 默认自动选择端点支持的缓存提示协议。
   assert.equal(provider.promptCachingEnabled, true);
+  assert.equal(provider.promptCacheHintMode, "auto");
   assert.equal(provider.nativeWebSearchEnabled, false);
   assert.deepEqual(provider.activeModels, ["gpt-5"]);
   assert.deepEqual(
@@ -68,6 +69,30 @@ test("codex provider normalization strips route suffixes and keeps only configur
   assert.equal(provider.models[0].maxOutputToken, 128_000);
   assert.equal(provider.models[1].contextWindow, 64_000);
   assert.equal(provider.models[1].maxOutputToken, 4_096);
+});
+
+test("full URL provider normalization preserves the final endpoint", () => {
+  const provider = settings.normalizeCustomProvider({
+    id: "codex-full-url",
+    type: "codex",
+    baseUrl: " https://relay.example.com/custom/v1/chat/completions?region=cn ",
+    isFullUrl: true,
+    modelsUrl: " https://models.example.com/catalog?api-version=2026-01 ",
+  });
+
+  assert.equal(provider.baseUrl, "https://relay.example.com/custom/v1/chat/completions?region=cn");
+  assert.equal(provider.isFullUrl, true);
+  assert.equal(provider.modelsUrl, "https://models.example.com/catalog?api-version=2026-01");
+  assert.equal(provider.requestFormat, "openai-completions");
+  assert.equal(settings.normalizeCustomProvider({ id: "legacy" }).isFullUrl, false);
+  assert.equal(
+    settings.normalizeCustomProvider({
+      id: "gemini-models-url",
+      type: "gemini",
+      modelsUrl: "https://ignored.example.com/models",
+    }).modelsUrl,
+    undefined,
+  );
 });
 
 test("claude provider normalization defaults routing, caching, and model limits", () => {
@@ -96,7 +121,51 @@ test("codex provider normalization can disable prompt caching explicitly", () =>
     promptCachingEnabled: false,
   });
   assert.equal(provider.promptCachingEnabled, false);
+  assert.equal(provider.promptCacheHintMode, "none");
   assert.equal(provider.promptCacheRetention, undefined);
+});
+
+test("codex cache hint modes normalize provider and model overrides", () => {
+  const explicit = settings.normalizeCustomProvider({
+    id: "codex-explicit",
+    type: "codex",
+    promptCachingEnabled: false,
+    promptCacheHintMode: "openrouter-session",
+    models: [
+      { id: "openai-model", promptCacheHintMode: "openai-key" },
+      { id: "invalid-model", promptCacheHintMode: "invalid" },
+    ],
+  });
+  assert.equal(explicit.promptCacheHintMode, "openrouter-session");
+  assert.equal(explicit.promptCachingEnabled, true);
+  assert.equal(explicit.models[0].promptCacheHintMode, "openai-key");
+  assert.equal(explicit.models[1].promptCacheHintMode, undefined);
+
+  const disabled = settings.normalizeCustomProvider({
+    id: "codex-none",
+    type: "codex",
+    promptCacheHintMode: "none",
+  });
+  assert.equal(disabled.promptCacheHintMode, "none");
+  assert.equal(disabled.promptCachingEnabled, false);
+
+  const invalid = settings.normalizeCustomProvider({
+    id: "codex-invalid",
+    type: "codex",
+    promptCacheHintMode: "invalid",
+  });
+  assert.equal(invalid.promptCacheHintMode, "auto");
+
+  const nonCodex = settings.normalizeProviderModelConfig(
+    { id: "claude-model", promptCacheHintMode: "openai-key" },
+    "claude_code",
+  );
+  assert.equal(nonCodex.promptCacheHintMode, undefined);
+
+  const builtinCodex = settings
+    .getBuiltinCustomProviders()
+    .find((provider) => provider.type === "codex");
+  assert.equal(builtinCodex.promptCacheHintMode, "auto");
 });
 
 test("claude provider normalization keeps the long cache retention preference", () => {
@@ -307,6 +376,7 @@ test("settings normalization canonicalizes project keyed maps with Windows path 
         openedAt: 2,
       },
     },
+    backgroundTasks: { opened: false, dismissedIds: [] },
     openVersion: 0,
     stateVersion: 0,
     writerId: "",
@@ -421,11 +491,12 @@ test("chat runtime controls default and follow provider model reasoning support"
     }),
     ["minimal", "low", "medium", "high"],
   );
-  // gemini-3-pro-preview：目录只有两档 low/high。
+  // gemini-3-pro-image：目录只有两档 low/high（gemini-3-pro-preview 已随
+  // #425 上游目录刷新移除，改用同为两档的模型覆盖该路径）。
   assert.deepEqual(
     settings.getChatRuntimeReasoningLevelsForProvider({
       providerId: "gemini",
-      modelId: "gemini-3-pro-preview",
+      modelId: "gemini-3-pro-image",
     }),
     ["low", "high"],
   );
@@ -820,6 +891,7 @@ test("gateway settings sync payload redacts provider api keys", () => {
             openedAt: 2,
           },
         },
+        backgroundTasks: { opened: false, dismissedIds: [] },
         openVersion: 3,
         stateVersion: 4,
         writerId: "",
@@ -833,6 +905,7 @@ test("gateway settings sync payload redacts provider api keys", () => {
             openedAt: 3,
           },
         },
+        backgroundTasks: { opened: false, dismissedIds: [] },
         openVersion: 2,
         stateVersion: 2,
         writerId: "",
@@ -1171,6 +1244,7 @@ test("normalizes right dock from current settings", () => {
         },
       },
     },
+    backgroundTasks: { opened: false, dismissedIds: [] },
     openVersion: 6,
     stateVersion: 7,
     writerId: "",

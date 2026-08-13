@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Loader2 } from "@liveagent/app/components/icons";
+import { CheckCircle2, Circle, Loader2 } from "@liveagent/ui/components/IconSet";
 import {
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { TodoProgressSnapshot } from "../../lib/chat/taskProgress";
+import type { TaskProgressSnapshot } from "../../lib/chat/taskProgress";
 import { cn } from "../../lib/shared/utils";
 
 const POINTER_CLOSE_DELAY_MS = 140;
@@ -28,7 +28,7 @@ export function TaskProgressIndicator({
   isConversationRunning,
   labels,
 }: {
-  snapshot: TodoProgressSnapshot;
+  snapshot: TaskProgressSnapshot;
   isConversationRunning: boolean;
   labels: TaskProgressIndicatorLabels;
 }) {
@@ -194,25 +194,24 @@ export function TaskProgressIndicator({
             </span>
           </div>
           <ul className="max-h-[min(320px,40vh)] space-y-0.5 overflow-y-auto overscroll-contain">
-            {snapshot.todos.map((todo, index) => {
+            {snapshot.tasks.map((task) => {
               return (
                 <li
-                  // biome-ignore lint/suspicious/noArrayIndexKey: anchored plan positions are the stable row identity
-                  key={index}
-                  data-task-status={todo.status}
-                  aria-current={todo.status === "in_progress" ? "step" : undefined}
+                  key={task.id}
+                  data-task-status={task.status}
+                  aria-current={task.status === "in_progress" ? "step" : undefined}
                   className={cn(
                     "grid grid-cols-[20px_minmax(0,1fr)] items-start gap-2 rounded-lg px-2 py-1.5 text-[13px] leading-5 transition-colors duration-200 ease-out motion-reduce:transition-none",
-                    todo.status === "in_progress" && "bg-muted/45",
+                    task.status === "in_progress" && "bg-muted/45",
                   )}
                 >
                   <span
-                    key={`${todo.status}:${isConversationRunning ? "running" : "paused"}`}
+                    key={`${task.status}:${isConversationRunning ? "running" : "paused"}`}
                     className="mt-0.5 inline-flex h-4 w-4 animate-in items-center justify-center fade-in-0 zoom-in-75 duration-200 motion-reduce:animate-none"
                   >
-                    {todo.status === "completed" ? (
+                    {task.status === "completed" ? (
                       <CheckCircle2 className="h-3.5 w-3.5 text-[hsl(var(--chat-success))]" />
-                    ) : todo.status === "in_progress" ? (
+                    ) : task.status === "in_progress" ? (
                       <Loader2
                         className={cn(
                           "h-3.5 w-3.5 motion-reduce:animate-none",
@@ -228,14 +227,14 @@ export function TaskProgressIndicator({
                   <span
                     className={cn(
                       "min-w-0 break-words text-pretty",
-                      todo.status === "completed"
+                      task.status === "completed"
                         ? "text-muted-foreground line-through"
-                        : todo.status === "in_progress"
+                        : task.status === "in_progress"
                           ? "font-medium text-foreground"
                           : "text-foreground/78",
                     )}
                   >
-                    {todo.content}
+                    {task.subject}
                   </span>
                 </li>
               );

@@ -5,6 +5,12 @@ import type {
 } from "@liveagent/ui/components/chat/MentionComposer";
 import { getAutomationState } from "@liveagent/ui/lib/automation/index";
 import { normalizeLogicalLineEndings } from "@liveagent/ui/lib/chat/composerText";
+import {
+  createUserMessageWithUploads,
+  mergePendingUploadedFiles,
+  type PendingUploadedFile,
+} from "@liveagent/ui/lib/chat/uploadedFiles";
+import { appendManagedSkillSelections } from "@liveagent/ui/lib/chat/useComposerActions";
 import type { ScrollFollowHandle } from "@liveagent/ui/lib/chat-scroll/useScrollFollow";
 import type { SidebarStore } from "@liveagent/ui/lib/sidebar/store";
 import {
@@ -23,8 +29,10 @@ import {
   appendMessagesToConversation,
   buildRequestContext,
   type ConversationViewState,
+  clearTaskListState,
   findHistoryMessageRefByMessageId,
   type HistoryMessageRef,
+  setTaskListState,
 } from "../../../lib/chat/conversation/conversationState";
 import {
   createConversationHookLifecycle,
@@ -33,11 +41,6 @@ import {
 import { createTurnCancellation } from "../../../lib/chat/conversation/turnCancellation";
 import type { ChatHistorySummary } from "../../../lib/chat/history/chatHistory";
 import type { MemoryExtractionStatusKey } from "../../../lib/chat/memory/extractionEngine";
-import {
-  createUserMessageWithUploads,
-  mergePendingUploadedFiles,
-  type PendingUploadedFile,
-} from "../../../lib/chat/messages/uploadedFiles";
 import {
   BRANCH_CONVERSATION_DEFAULT_TITLE,
   buildFallbackConversationTitle,
@@ -71,7 +74,8 @@ import {
 } from "../../../lib/subagents";
 import { invoke } from "../../../lib/tauriBridge";
 import type { SkillAccessPolicy } from "../../../lib/tools/skillAccessPolicy";
-import { appendManagedSkillSelections, asErrorMessage } from "../chatPageUtils";
+import type { TaskStateStore } from "../../../lib/tools/taskTools";
+import { asErrorMessage } from "../chatPageUtils";
 import {
   buildTextFromComposerDraft,
   importPastedTextsAsFiles,
@@ -88,7 +92,11 @@ import type { PersistConversationParams } from "../history/useConversationHistor
 import type { useChatPageRuntimeStore } from "../hooks/useChatPageRuntimeStore";
 import type { useLiveTranscriptController } from "../hooks/useLiveTranscriptController";
 import type { createChatRuntimeHost } from "./ChatRuntimeHost";
-import { buildErrorAssistantMessage, formatHookWarningMessage } from "./chatPageRuntime";
+import {
+  buildErrorAssistantMessage,
+  formatHookWarningMessage,
+  resolveEffectiveConversationWorkdir,
+} from "./chatPageRuntime";
 import {
   finalizeChatRunInOrder,
   releaseChatRunUi,
@@ -318,11 +326,14 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       gatewayBridgeRequest?.executionModeOverride ??
       settings.system.executionMode;
     const effectiveIsAgentMode = isAgentExecutionMode(effectiveExecutionMode);
-    const effectiveWorkdir = (
-      overrides?.workdirOverride ??
-      gatewayBridgeRequest?.workdirOverride ??
-      (effectiveIsAgentMode ? (runtimeEntry?.workdir ?? settings.system.workdir) : "")
-    ).trim();
+    const effectiveWorkdir = resolveEffectiveConversationWorkdir({
+      isAgentMode: effectiveIsAgentMode,
+      workdirOverride: overrides?.workdirOverride,
+      gatewayWorkdirOverride: gatewayBridgeRequest?.workdirOverride,
+      persistedWorkdir: sidebarStore.peek(conversationId)?.cwd,
+      runtimeWorkdir: runtimeEntry?.workdir,
+      globalWorkdir: settings.system.workdir,
+    });
     const effectiveProjectPathKey = workspaceProjectPathKey(effectiveWorkdir);
     const effectiveAssociatedSshHostIds = getSshProjectHostIds(
       settings.ssh,
@@ -604,7 +615,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       providerId,
       model,
     });
-    const baseConversationState = runtimeEntry.state;
+    const baseConversationState = clearTaskListState(runtimeEntry.state);
     const isFirstTurn = baseConversationState.meta.totalMessageCount === 0;
     const existingHistoryItem =
       sidebarStore.peek(conversationId) ??
@@ -916,10 +927,14 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
 
     if (overrides?.editResendBaseMessageRef) {
       try {
-        nextConversationState = await replaceConversationAtMessage(
-          conversationId,
-          overrides.editResendBaseMessageRef,
-          pendingUserMessage,
+        // 重发同样是新用户消息开启新 Run:替换回来的历史 meta 可能带着上一
+        // Run 持久化的 taskList,必须与常规发送一样在 Run 边界清除。
+        nextConversationState = clearTaskListState(
+          await replaceConversationAtMessage(
+            conversationId,
+            overrides.editResendBaseMessageRef,
+            pendingUserMessage,
+          ),
         );
         initialUserTurnPersisted = true;
         const keepParentToolCallIds =
@@ -1191,7 +1206,8 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
             compactionStatus: status,
           })),
         setBridgeToolStatus: updateGatewayBridgeToolStatus,
-        queueCheckpoint: (state) => gatewayBridgeEvents.queueCheckpoint(state),
+        queueCheckpoint: (state, contextUsageTokens) =>
+          gatewayBridgeEvents.queueCheckpoint(state, contextUsageTokens),
         persist: (state) =>
           persistConversation({
             conversationId,
@@ -1425,6 +1441,33 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       resetLiveTranscript(transcriptStore);
     }
 
+    // Run 级任务清单存储:先落盘、成功后才应用到运行时状态,失败时状态从未
+    // 变更(无需回滚)。持久化走非终态通道——中途任务写盘失败只属于本次工具
+    // 调用(模型收到错误可重试),绝不能点亮 terminalHistoryPersistFailed 把
+    // 已成功收尾的 run 误报为 history_persist_failed。
+    const taskStateStore: TaskStateStore = {
+      runId: gatewayBridgeRequestId,
+      getState: () => nextConversationState.meta.taskList,
+      commitState: async (taskList) => {
+        const persisted = await persistConversationWithHistorySync({
+          conversationId,
+          sessionId,
+          providerId,
+          model,
+          selectedModel,
+          cwd: conversationCwd,
+          state: setTaskListState(nextConversationState, taskList),
+          fallbackTitle,
+          createdAt,
+          titlePromise,
+        }).catch(() => false);
+        if (!persisted) {
+          throw new Error("Failed to persist task state.");
+        }
+        applyConversationState(setTaskListState(nextConversationState, taskList));
+      },
+    };
+
     try {
       if (effectiveIsAgentMode) {
         await chatRuntimeHost.runTurn({
@@ -1486,6 +1529,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
               }
             },
             sessionId,
+            taskStateStore,
             conversationId,
             conversationCwd,
             fallbackTitle,

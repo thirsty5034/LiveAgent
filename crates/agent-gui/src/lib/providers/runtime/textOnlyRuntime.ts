@@ -4,7 +4,7 @@ import {
   type HostedSearchBlock,
   type HostedSearchOrderedBlock,
   mergeHostedSearchBlocks,
-} from "../../chat/messages/hostedSearch";
+} from "@liveagent/ui/lib/chat/hostedSearch";
 import { buildStreamRequestDebugPayload, type StreamDebugLogger } from "../../debug/agentDebug";
 import type { ProviderId } from "../../settings";
 import { withPowerActivity } from "../../system/powerActivity";
@@ -121,6 +121,8 @@ function buildTextOnlyStreamOptions(params: {
     model: params.model,
     workdir: params.workdir,
     nativeWebSearch: params.nativeWebSearch,
+    promptCacheHintMode:
+      params.runtime.modelConfig?.promptCacheHintMode ?? params.runtime.promptCacheHintMode,
     debugLogger: params.debugLogger,
     extra: { sessionId },
   });

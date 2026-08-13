@@ -394,7 +394,7 @@ test("result details round-trip through the transcript parser", () => {
   assert.equal(parsed.answers.length, 2);
   assert.equal(parsed.cancelled, false);
 
-  assert.equal(shared.parseAskUserQuestionResultDetails({ kind: "todo_write" }), null);
+  assert.equal(shared.parseAskUserQuestionResultDetails({ kind: "task_list" }), null);
   assert.equal(shared.parseAskUserQuestionResultDetails(null), null);
 });
 

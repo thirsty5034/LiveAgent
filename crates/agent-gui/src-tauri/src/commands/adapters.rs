@@ -10,9 +10,9 @@ use serde_json::Value;
 
 use crate::commands::app::{CloseWindowBehaviorState, GlobalShortcutBinding, GlobalShortcutFailure, GlobalShortcutRegistry, MacOsTrafficLightMetrics, RuntimePlatformResponse, WindowPinState};
 use crate::commands::chat_file_links::{ChatFileLinkError, ChatFileLinkOpenResponse};
-use crate::commands::chat_history::{ChatHistoryListResponse, ChatHistoryMessageRef, ChatHistorySearchArgs, ChatHistorySearchResponse, ChatHistorySegmentMutationInput, ChatHistoryShareStatus, ChatHistorySummary, ChatHistoryUpsertInput, ChatHistoryWindowRecord, ChatHistoryWorkdirsResponse};
+use crate::commands::chat_history::{ChatHistoryAppendSegmentInput, ChatHistoryListResponse, ChatHistoryMessageRef, ChatHistorySearchArgs, ChatHistorySearchResponse, ChatHistorySegmentMutationInput, ChatHistoryShareStatus, ChatHistorySummary, ChatHistoryUpsertInput, ChatHistoryWindowRecord, ChatHistoryWorkdirsResponse};
 use crate::commands::fs::{CreateDirResponse, DeleteResponse, EditTextResponse, FsCommandError, FsListDirsResponse, FsRootsResponse, GlobResponse, GrepResponse, ListResponse, MentionListResponse, OpenWorkspacePathResponse, PathStatusResponse, ReadEditableTextResponse, ReadResponse, RenameResponse, WriteTextResponse};
-use crate::commands::git::{GitBranchesResponse, GitCloneTask, GitCloneTaskRegistry, GitCommitDetailsResponse, GitDiffResponse, GitLogResponse, GitOperationResponse, GitRemoteBranchesResponse, GitRepositoryDiscovery, GitRepositoryState};
+use crate::commands::git::{GitBranchesResponse, GitCloneTask, GitCloneTaskRegistry, GitCommitDetailsResponse, GitDiffResponse, GitLogResponse, GitOperationResponse, GitRemoteBranchesResponse, GitRepositoryDiscovery, GitRepositoryState, GitWorktreeResponse, GitRemoveWorktreeResponse};
 use crate::commands::hook::{HookHttpRunResponse, HookScopeRegistry};
 use crate::commands::mcp::{McpCallToolResponse, McpRuntimeManager, McpRuntimeStatus, McpRuntimeTestResponse, McpServerConfig, McpStopServerResponse, McpToolInfo};
 use crate::commands::settings::{CcsProvidersResponse, CherryProvidersResponse, SettingsLoadResponse, SshKnownHostResetResponse, SshPatchApplyResponse};
@@ -608,7 +608,7 @@ pub async fn chat_history_upsert_active_segment(
 
 #[tauri::command]
 pub async fn chat_history_append_segment(
-    input: ChatHistorySegmentMutationInput,
+    input: ChatHistoryAppendSegmentInput,
     gateway_controller: tauri::State<'_, Arc<GatewayController>>,
 ) -> Result<ChatHistorySummary, String> {
     crate::commands::chat_history::chat_history_append_segment(input, gateway_controller.inner()).await
@@ -2039,6 +2039,36 @@ pub async fn git_stash_pop(
     workdir: String,
 ) -> Result<GitOperationResponse, String> {
     crate::commands::git::git_stash_pop(workdir).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn git_create_worktree(
+    workdir: String,
+    branch: Option<String>,
+    directory_name: Option<String>,
+    parent_directory: Option<String>,
+    start_point: Option<String>,
+    name: Option<String>,
+) -> Result<GitWorktreeResponse, String> {
+    crate::commands::git::git_create_worktree(
+        workdir,
+        branch,
+        directory_name,
+        parent_directory,
+        start_point,
+        name,
+    )
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn git_remove_worktree(
+    workdir: String,
+    worktree_path: String,
+    force: Option<bool>,
+    delete_branch: Option<bool>,
+) -> Result<GitRemoveWorktreeResponse, String> {
+    crate::commands::git::git_remove_worktree(workdir, worktree_path, force, delete_branch).await
 }
 
 // ===== subagent_worktree =====

@@ -38,7 +38,10 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-use crate::commands::chat_history::{ChatHistoryMessageRef, ChatHistorySearchArgs, ChatHistorySegmentMutationInput, ChatHistoryUpsertInput};
+use crate::commands::chat_history::{
+    ChatHistoryAppendSegmentInput, ChatHistoryMessageRef, ChatHistorySearchArgs,
+    ChatHistorySegmentMutationInput, ChatHistoryUpsertInput,
+};
 use crate::commands::mcp::{McpServerConfig};
 use crate::commands::subagent_store::{SubagentIdentityListInput, SubagentIdentityUpsertInput, SubagentMessageAppendInput, SubagentMessageListInput, SubagentRunListInput, SubagentRunLoadInput, SubagentRunPruneInput, SubagentRunSaveInput};
 use crate::commands::subagent_worktree::{SubagentWorktreeApplyInput, SubagentWorktreeCleanupInput, SubagentWorktreeCreateInput, SubagentWorktreeStatusInput};
@@ -631,7 +634,7 @@ pub async fn dispatch(
         }
     },
     "chat_history_append_segment" => {
-        let input_v: ChatHistorySegmentMutationInput = take_arg(&mut args, "input")?;
+        let input_v: ChatHistoryAppendSegmentInput = take_arg(&mut args, "input")?;
         match crate::commands::chat_history::chat_history_append_segment(input_v, &state.ctx.gateway_controller).await {
             Ok(v) => to_value(v),
             Err(e) => Err(HeadlessError::Business(e)),

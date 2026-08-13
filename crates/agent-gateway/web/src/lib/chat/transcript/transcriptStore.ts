@@ -24,6 +24,7 @@ import {
 } from "./turnReducer";
 import type {
   HistoryApplyMode,
+  ManualCompactionResult,
   RetryAttemptRecord,
   TranscriptRow,
   TranscriptSnapshot,
@@ -95,6 +96,7 @@ const EMPTY_SNAPSHOT: TranscriptSnapshot = {
   toolStatus: null,
   toolStatusIsCompaction: false,
   retryAttempts: EMPTY_RETRY_ATTEMPTS,
+  manualCompactionResult: null,
   needsHistoryRefresh: false,
   foldRevision: 0,
   revision: 0,
@@ -192,6 +194,7 @@ export function createTranscriptStore(options?: {
   let toolStatus: string | null = null;
   let toolStatusIsCompaction = false;
   let retryAttempts: readonly RetryAttemptRecord[] = EMPTY_RETRY_ATTEMPTS;
+  let manualCompactionResult: ManualCompactionResult | null = null;
   let foldRevision = 0;
   let localTurnSeq = 0;
   // Idempotency cursor: the highest log seq already applied. Re-subscribe
@@ -357,6 +360,7 @@ export function createTranscriptStore(options?: {
       toolStatus,
       toolStatusIsCompaction,
       retryAttempts,
+      manualCompactionResult,
       needsHistoryRefresh: rebaseDivergent || turns.some((turn) => turn.contentStale === true),
       foldRevision,
       revision: snapshot.revision + 1,
@@ -1017,6 +1021,32 @@ export function createTranscriptStore(options?: {
         if (activeRun && activeRun.runId === runId) {
           activeRun = { ...activeRun, toolStatus, toolStatusIsCompaction };
         }
+        return;
+      }
+      case "manual_compaction_result": {
+        // 本分支是 switch 里唯一直读载荷形状的地方，必须与相邻 case 一样防御式
+        // 解构：可靠 ingress journal 会重放本帧，缺字段的畸形帧若抛 TypeError 会
+        // 在每次重订阅时复现并打断整条应用链。operationId 非字符串/空、status 不在
+        // 白名单内、message 非字符串——一律降级（丢帧或空串），永不抛错。
+        const rawOperationId = (event as { operationId?: unknown }).operationId;
+        const operationId = typeof rawOperationId === "string" ? rawOperationId.trim() : "";
+        if (!operationId) return;
+        const rawStatus = (event as { status?: unknown }).status;
+        if (
+          rawStatus !== "compacted" &&
+          rawStatus !== "failed" &&
+          rawStatus !== "busy" &&
+          rawStatus !== "skipped"
+        ) {
+          return;
+        }
+        const rawMessage = (event as { message?: unknown }).message;
+        manualCompactionResult = {
+          operationId,
+          status: rawStatus,
+          message: typeof rawMessage === "string" ? rawMessage.trim() : "",
+        };
+        schedule(true);
         return;
       }
       default: {

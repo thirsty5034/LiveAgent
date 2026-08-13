@@ -6,6 +6,7 @@ import type {
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { ASK_USER_QUESTION_TOOL_NAME } from "@liveagent/ui/lib/chat/askUserQuestion";
+import type { HostedSearchBlock } from "@liveagent/ui/lib/chat/hostedSearch";
 import type { CompactionController } from "../../../lib/chat/compaction/controller";
 import { estimateTextTokenUnits } from "../../../lib/chat/compaction/tokenLedger";
 import type { ProviderRuntimeConfig } from "../../../lib/chat/compaction/types";
@@ -33,7 +34,6 @@ import type {
   MemoryExtractionStatusText,
   MemoryExtractionVisibleEvents,
 } from "../../../lib/chat/memory/extractionEngine";
-import type { HostedSearchBlock } from "../../../lib/chat/messages/hostedSearch";
 import {
   appendTextDeltaToRound,
   appendThinkingDeltaToRound,
@@ -75,7 +75,7 @@ import type { BuiltinToolExecutionContext } from "../../../lib/tools/builtinType
 import { createFileToolState } from "../../../lib/tools/fileToolState";
 import type { SkillAccessPolicy } from "../../../lib/tools/skillAccessPolicy";
 import type { SshManagerSessionChange } from "../../../lib/tools/sshManagerTools";
-import { getOrCreateTodoToolState } from "../../../lib/tools/todoTools";
+import { formatTaskListRuntimeContext, type TaskStateStore } from "../../../lib/tools/taskTools";
 import { isSessionApproved, requestToolApproval } from "../../../lib/tools/toolApproval";
 import { resolveToolPolicy } from "../../../lib/tools/toolPolicy";
 import type { TunnelManagerChange } from "../../../lib/tools/tunnelManagerTools";
@@ -238,6 +238,8 @@ export type RunAgentConversationTurnParams = {
   sshManagerRemoteAllowed?: boolean;
   onSshSessionsChanged?: (change: SshManagerSessionChange) => void;
   sessionId: string;
+  /** Run 级任务状态存储：由 send 管线构建，提交走非终态持久化。 */
+  taskStateStore: TaskStateStore;
   conversationId: string;
   conversationCwd?: string;
   fallbackTitle: string;
@@ -302,6 +304,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     sshManagerRemoteAllowed,
     onSshSessionsChanged,
     sessionId,
+    taskStateStore,
     conversationId,
     conversationCwd,
     fallbackTitle,
@@ -380,13 +383,22 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     parentMessageBusSnapshot = await loadParentBusSnapshot();
     return parentMessageBusSnapshot;
   };
-  const withSubagentRuntimeContext = (context: Context): Context => {
+  const withAgentRuntimeContext = (context: Context): Context => {
     let systemPrompt = context.systemPrompt;
     if (subagentReminder) {
       systemPrompt = appendSystemPrompt(systemPrompt, subagentReminder);
     }
     if (parentMessageBusSnapshot) {
       systemPrompt = appendSystemPrompt(systemPrompt, parentMessageBusSnapshot);
+    }
+    // 只注入本 Run 的权威任务状态：edit-resend 等路径可能把上一 Run 持久化的
+    // taskList 带回 meta，工具层按 runId 视其为不存在，注入必须同口径。
+    const taskList = getNextConversationState().meta.taskList;
+    if (taskList && taskList.runId === taskStateStore.runId) {
+      const taskListContext = formatTaskListRuntimeContext(taskList);
+      if (taskListContext) {
+        systemPrompt = appendSystemPrompt(systemPrompt, taskListContext);
+      }
     }
     return systemPrompt !== context.systemPrompt
       ? {
@@ -396,7 +408,6 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
       : context;
   };
   const fileState = createFileToolState();
-  const todoState = getOrCreateTodoToolState(conversationId);
   const subagentScheduler = createSubagentScheduler();
   const runtimePlatform = await resolveRuntimePlatform();
   const buildRegistryStartedAt = perfNowMs();
@@ -405,7 +416,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     providerId,
     runtimePlatform,
     fileState,
-    todoState,
+    taskStateStore,
     askUserQuestionConversationId: conversationId,
     skillsEnabled: effectiveSkillsEnabled,
     skillsRootDir,
@@ -458,7 +469,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
 
   const preCompactionStartedAt = perfNowMs();
   await compaction.maybeCompactPreSend({
-    budgetContext: withSubagentRuntimeContext(
+    budgetContext: withAgentRuntimeContext(
       buildPreparedContext(getNextConversationState(), combinedTools, {
         includeUploadedFilesMetadata: true,
       }),
@@ -600,7 +611,15 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     });
   }
 
-  function commitAssistantRoundMeta(assistant: AssistantMessage, round: number) {
+  function commitAssistantRoundMeta(
+    assistant: AssistantMessage,
+    round: number,
+    options?: { contextRelevant?: boolean },
+  ) {
+    const contextRelevant = options?.contextRelevant !== false;
+    const contextUsageTokens = contextRelevant
+      ? compaction.observeContextMessages([assistant])
+      : undefined;
     gatewayBridgeEvents.queueToken("", {
       round,
       provider: assistant.provider,
@@ -608,6 +627,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
       api: assistant.api,
       stopReason: assistant.stopReason,
       usage: assistant.usage,
+      ...(contextUsageTokens ? { contextUsageTokens } : {}),
+      ...(contextRelevant ? {} : { contextRelevant: false }),
     });
     batchLiveRoundsUpdate(
       (prev) =>
@@ -620,6 +641,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
             stopReason: String(assistant.stopReason ?? ""),
             usage: assistant.usage,
             usageTotalTokens: assistant.usage?.totalTokens,
+            contextUsageTokens,
+            contextRelevant,
           },
         })),
       transcriptStore,
@@ -726,7 +749,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     let midStreamCompactionRequested = false;
     let sawToolCallInRound = false;
     const nativeWebSearchEnabled = runtime.nativeWebSearchEnabled !== false;
-    const agentContext = withSubagentRuntimeContext(
+    const agentContext = withAgentRuntimeContext(
       pendingAgentContext ??
         buildPreparedContext(getNextConversationState(), combinedTools, {
           includeUploadedFilesMetadata: true,
@@ -761,6 +784,11 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
           protectionCheckChars = 0;
           sawToolCallInRound = false;
           hookLifecycle.startTurn(round);
+          const contextUsageTokens = compaction.contextUsageTokens;
+          gatewayBridgeEvents.queueToken("", {
+            round,
+            ...(contextUsageTokens ? { contextUsageTokens } : {}),
+          });
           batchLiveRoundsUpdate(
             (prev) => [
               ...prev,
@@ -768,6 +796,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
                 key: `r${round}`,
                 round,
                 blocks: [],
+                meta: contextUsageTokens ? { contextUsageTokens } : undefined,
                 runningToolCallIds: [],
                 thinkingOpen: false,
               },
@@ -879,6 +908,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
         },
         onToolResult: (toolCall, toolResult, round) => {
           if (toolResult.role !== "toolResult") return;
+          compaction.observeContextMessages([toolResult]);
           discardPendingToolCallDelta(toolCall, round);
           if (!isSubagentCardToolCall(toolCall)) {
             hookLifecycle.toolResultReceived(round);
@@ -939,7 +969,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
             getNextConversationState(),
             emittedMessages,
           );
-          const tempContext = withSubagentRuntimeContext(
+          const tempContext = withAgentRuntimeContext(
             buildPreparedContext(tempState, combinedTools, {
               includeUploadedFilesMetadata: true,
             }),
@@ -962,7 +992,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
           latestAgentEmittedMessages = [];
           clearPersistableAgentProgress();
           return {
-            context: withSubagentRuntimeContext(compactedContext),
+            context: withAgentRuntimeContext(compactedContext),
             emittedMessages: [],
           };
         },
@@ -1005,7 +1035,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
       const compactionResult = await compaction.compactDuringRun({
         trigger: "mid-stream",
         state: tempState,
-        budgetContext: withSubagentRuntimeContext(
+        budgetContext: withAgentRuntimeContext(
           buildPreparedContext(tempState, combinedTools, {
             includeAbortedMessages: true,
             includeUploadedFilesMetadata: true,
@@ -1081,10 +1111,41 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     });
   };
 
-  if (showSilentMemoryExtraction && shouldRunMemoryExtraction) {
+  const persistCompletedState = (state: ConversationViewState) =>
+    persistConversationWithHistorySync({
+      conversationId,
+      sessionId,
+      providerId,
+      model,
+      cwd: conversationCwd,
+      state,
+      fallbackTitle,
+      createdAt,
+      titlePromise,
+    });
+
+  const pendingTerminalAssistantMeta = pendingTerminalAssistantMetaRef.current;
+  if (pendingTerminalAssistantMeta) {
+    commitAssistantRoundMeta(
+      pendingTerminalAssistantMeta.assistant,
+      pendingTerminalAssistantMeta.round,
+    );
+  }
+  hookLifecycle.endAgent();
+
+  applyConversationState(finalState);
+  freezeGatewayFinalProjection(finalState, true);
+  settleLiveTranscript(transcriptStore);
+  const historyPersisted = await persistCompletedState(finalState);
+
+  // Memory extraction reads the in-memory final state. Only run it after the
+  // durable history write succeeds so we never keep "memory has the answer,
+  // chat history only has the user prompt" after a failed final persist.
+  if (historyPersisted && showSilentMemoryExtraction && shouldRunMemoryExtraction) {
     const extraction = await runPostTurnMemoryExtraction({
       roundOffset: memoryRoundOffset,
       onTurnStart: (round) => {
+        gatewayBridgeEvents.queueToken("", { round, contextRelevant: false });
         batchLiveRoundsUpdate(
           (prev) => [
             ...prev,
@@ -1092,6 +1153,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
               key: `r${round}`,
               round,
               blocks: [],
+              meta: { contextRelevant: false },
               runningToolCallIds: [],
               thinkingOpen: false,
             },
@@ -1195,7 +1257,8 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
           transcriptStore,
         );
       },
-      onAssistantMessage: commitAssistantRoundMeta,
+      onAssistantMessage: (assistant, round) =>
+        commitAssistantRoundMeta(assistant, round, { contextRelevant: false }),
       onToolStatus: (s) => {
         gatewayBridgeEvents.queueToolStatus(s, false);
         updateToolStatus(s, transcriptStore);
@@ -1208,29 +1271,13 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
       );
     }
   }
-  const pendingTerminalAssistantMeta = pendingTerminalAssistantMetaRef.current;
-  if (pendingTerminalAssistantMeta) {
-    commitAssistantRoundMeta(
-      pendingTerminalAssistantMeta.assistant,
-      pendingTerminalAssistantMeta.round,
-    );
+  if (completedState !== finalState) {
+    applyConversationState(completedState);
+    freezeGatewayFinalProjection(completedState, true);
+    settleLiveTranscript(transcriptStore);
+    await persistCompletedState(completedState);
   }
-  hookLifecycle.endAgent();
-  applyConversationState(completedState);
-  freezeGatewayFinalProjection(completedState, true);
-  settleLiveTranscript(transcriptStore);
-  await persistConversationWithHistorySync({
-    conversationId,
-    sessionId,
-    providerId,
-    model,
-    cwd: conversationCwd,
-    state: completedState,
-    fallbackTitle,
-    createdAt,
-    titlePromise,
-  });
-  if (!showSilentMemoryExtraction && shouldRunMemoryExtraction) {
+  if (historyPersisted && !showSilentMemoryExtraction && shouldRunMemoryExtraction) {
     void runPostTurnMemoryExtraction();
   }
 }

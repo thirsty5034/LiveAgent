@@ -334,7 +334,7 @@ test("historical and streaming assistant rows share the explicit file-open prop 
     "../../src/pages/chat/transcript/TranscriptList.tsx",
     "../../src/pages/chat/transcript/AssistantRenderUnit.tsx",
     "../../src/pages/chat/components/AssistantBubble.tsx",
-    "../../src/pages/chat/components/assistant-bubble/RoundContent.tsx",
+    "../../../agent-ui/src/components/chat/assistant-bubble/RoundContent.tsx",
   ];
   for (const relativePath of files) {
     const source = fs.readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
@@ -344,7 +344,7 @@ test("historical and streaming assistant rows share the explicit file-open prop 
   const roundContent = fs.readFileSync(
     fileURLToPath(
       new URL(
-        "../../src/pages/chat/components/assistant-bubble/RoundContent.tsx",
+        "../../../agent-ui/src/components/chat/assistant-bubble/RoundContent.tsx",
         import.meta.url,
       ),
     ),
@@ -367,8 +367,16 @@ test("historical and streaming assistant rows share the explicit file-open prop 
     fileURLToPath(new URL("../../src/pages/ChatPage.tsx", import.meta.url)),
     "utf8",
   );
-  assert.match(chatPage, /openInFileManager: true/);
-  assert.match(chatPage, /!result\.outsideWorkspace/);
+  assert.match(chatPage, /useChatFileLinkNavigation/);
+
+  const navigation = fs.readFileSync(
+    fileURLToPath(
+      new URL("../../../agent-ui/src/lib/chat/useChatFileLinkNavigation.ts", import.meta.url),
+    ),
+    "utf8",
+  );
+  assert.match(navigation, /openInFileManager: true/);
+  assert.match(navigation, /!result\.outsideWorkspace/);
 });
 
 test("forged internal payloads cannot become clickable file links", () => {

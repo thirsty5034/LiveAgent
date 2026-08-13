@@ -1,32 +1,5 @@
 import { ProviderSettingsExtension } from "@liveagent/adapters/providerSettings";
 import {
-  Check,
-  ChevronDown,
-  ChevronUp,
-  ClaudeIcon,
-  ClipboardPaste,
-  ExternalLink,
-  Eye,
-  EyeOff,
-  GeminiIcon,
-  Globe,
-  GrokIcon,
-  Key,
-  List,
-  OpenaiChatgptIcon,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings,
-  Trash2,
-  Waypoints,
-  X,
-  Zap,
-} from "@liveagent/app/components/icons";
-import { buildModelOptions } from "@liveagent/app/lib/chat/chatPageHelpers";
-import { parseModelValue, toModelValue } from "@liveagent/app/lib/providers/llm";
-import {
   getProviderUsageCardDisplay,
   getUsagePlanDisplay,
   type ProviderUsageState,
@@ -43,6 +16,8 @@ import {
   type CustomProvider,
   getDefaultUsageQueryConfig,
   MODEL_FAILOVER_QUEUE_LIMIT,
+  PROMPT_CACHE_HINT_MODES,
+  type PromptCacheHintMode,
   type ProviderFailoverSettings,
   type ProviderId,
   type ProviderModelConfig,
@@ -52,6 +27,32 @@ import {
   updateModelFailover,
 } from "@liveagent/app/lib/settings";
 import type { SettingsSectionProps } from "@liveagent/app/pages/settings/types";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  ClaudeIcon,
+  ClipboardPaste,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  GeminiIcon,
+  Globe,
+  GrokIcon,
+  Key,
+  Link2,
+  List,
+  OpenaiChatgptIcon,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings,
+  Trash2,
+  Waypoints,
+  X,
+  Zap,
+} from "@liveagent/ui/components/IconSet";
 import { Button } from "@liveagent/ui/components/ui/button";
 import { useConfirmDialog } from "@liveagent/ui/components/ui/confirm-dialog";
 import { Input } from "@liveagent/ui/components/ui/input";
@@ -63,9 +64,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@liveagent/ui/components/ui/select";
+import { Switch } from "@liveagent/ui/components/ui/switch";
 import { Textarea } from "@liveagent/ui/components/ui/textarea";
 import { useVerticalListReorder } from "@liveagent/ui/components/ui/useVerticalListReorder";
 import { useLocale } from "@liveagent/ui/i18n/index";
+import { buildModelOptions } from "@liveagent/ui/lib/models/modelOptions";
+import { parseModelValue, toModelValue } from "@liveagent/ui/lib/models/modelValue";
 import {
   CustomHeaderImportError,
   type CustomHeaderImportErrorCode,
@@ -234,6 +238,13 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   xai: "Grok",
 };
 
+const PROMPT_CACHE_HINT_LABEL_KEYS: Record<PromptCacheHintMode, string> = {
+  auto: "settings.promptCacheHintMode.auto",
+  "openai-key": "settings.promptCacheHintMode.openaiKey",
+  "openrouter-session": "settings.promptCacheHintMode.openrouterSession",
+  none: "settings.promptCacheHintMode.none",
+};
+
 function getProviderLabel(type: ProviderId) {
   return PROVIDER_LABELS[type];
 }
@@ -340,6 +351,10 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
     isGatewayWebui && initialApiKey.trim() === "" && initialData?.apiKeyConfigured === true;
   const [name, setName] = useState(initialData?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(initialData?.baseUrl ?? "");
+  const [isFullUrl, setIsFullUrl] = useState(initialData?.isFullUrl ?? false);
+  const [modelsUrl, setModelsUrl] = useState(
+    providerType === "gemini" ? "" : (initialData?.modelsUrl ?? ""),
+  );
   const [apiKey, setApiKey] = useState(
     initialUsesRedactedApiKey ? REDACTED_API_KEY_DISPLAY : initialApiKey,
   );
@@ -371,6 +386,10 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
   const [useSystemProxy, setUseSystemProxy] = useState(initialData?.useSystemProxy ?? false);
   const [promptCachingEnabled, setPromptCachingEnabled] = useState(
     initialData?.promptCachingEnabled ?? (providerType !== "gemini" && providerType !== "xai"),
+  );
+  const [promptCacheHintMode, setPromptCacheHintMode] = useState<PromptCacheHintMode>(
+    initialData?.promptCacheHintMode ??
+      (initialData?.promptCachingEnabled === false ? "none" : "auto"),
   );
   const [promptCacheRetention, setPromptCacheRetention] = useState<"short" | "long">(
     initialData?.promptCacheRetention === "long" ? "long" : "short",
@@ -426,7 +445,8 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
   activeModelsRef.current = activeModels;
   const apiKeyIsRedactedDisplay = initialUsesRedactedApiKey && apiKey === REDACTED_API_KEY_DISPLAY;
   const apiKeyForRequest = apiKeyIsRedactedDisplay ? "" : apiKey.trim();
-  const canFetchModels = baseUrl.trim().length > 0 && apiKeyForRequest.length > 0;
+  const canFetchModels =
+    (modelsUrl.trim().length > 0 || baseUrl.trim().length > 0) && apiKeyForRequest.length > 0;
   const persistedUsageQueryProviderId = getPersistedUsageQueryProviderId(initialData);
   const { confirm: requestUsageQueryConfirm, dialog: usageQueryConfirmDialog } = useConfirmDialog();
   const [usageQueryTest, setUsageQueryTest] = useState<{
@@ -460,7 +480,11 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
       setFetchingModels(true);
       setFetchError(null);
       try {
-        const list = await fetchModelsFromApi(providerType, url, key, { useSystemProxy });
+        const list = await fetchModelsFromApi(providerType, url, key, {
+          useSystemProxy,
+          isFullUrl,
+          modelsUrl,
+        });
         const mergedModels = mergeFetchedModels(list, modelsRef.current);
         commitModelsWithNewRowsRef.current(mergedModels);
       } catch (err) {
@@ -469,14 +493,21 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
         setFetchingModels(false);
       }
     },
-    [providerType, useSystemProxy],
+    [isFullUrl, modelsUrl, providerType, useSystemProxy],
   );
 
   useEffect(() => {
     const trimUrl = baseUrl.trim();
+    const trimModelsUrl = modelsUrl.trim();
     const trimKey = apiKeyForRequest;
-    const key = buildProviderModelsFetchKey(trimUrl, trimKey, useSystemProxy);
-    if (!trimUrl || !trimKey) return;
+    const key = buildProviderModelsFetchKey(
+      trimUrl,
+      trimKey,
+      useSystemProxy,
+      isFullUrl,
+      trimModelsUrl,
+    );
+    if ((!trimUrl && !trimModelsUrl) || !trimKey) return;
     if (key === prevFetchKey.current) return;
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -488,7 +519,7 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [apiKeyForRequest, baseUrl, doFetch, useSystemProxy]);
+  }, [apiKeyForRequest, baseUrl, doFetch, isFullUrl, modelsUrl, useSystemProxy]);
 
   useEffect(() => {
     if (!modelOrder) return;
@@ -851,6 +882,8 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
       name: name.trim(),
       type: providerType,
       baseUrl: baseUrl.trim(),
+      isFullUrl,
+      modelsUrl: providerType === "gemini" ? undefined : modelsUrl.trim() || undefined,
       apiKey: nextApiKey,
       apiKeyConfigured:
         nextApiKey.length > 0 ||
@@ -871,7 +904,12 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
           ? "high"
           : (initialData?.reasoning ?? "off"),
       promptCachingEnabled:
-        providerType === "gemini" || providerType === "xai" ? false : promptCachingEnabled,
+        providerType === "codex"
+          ? promptCacheHintMode !== "none"
+          : providerType === "gemini" || providerType === "xai"
+            ? false
+            : promptCachingEnabled,
+      promptCacheHintMode: providerType === "codex" ? promptCacheHintMode : undefined,
       promptCacheRetention:
         providerType === "claude_code" && promptCachingEnabled && promptCacheRetention === "long"
           ? "long"
@@ -1153,12 +1191,41 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
 
                 <div className="mt-4 grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
                   <div className="space-y-1.5">
-                    <Label htmlFor="modal-baseurl">Base URL</Label>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <Label htmlFor="modal-baseurl">{t("settings.baseUrl")}</Label>
+                      <div className="flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5">
+                        <Link2
+                          className={cn(
+                            "h-3.5 w-3.5",
+                            isFullUrl ? "text-sky-500" : "text-muted-foreground",
+                          )}
+                        />
+                        <span
+                          className={cn(
+                            "text-xs font-medium",
+                            isFullUrl ? "text-foreground" : "text-muted-foreground",
+                          )}
+                        >
+                          {t("settings.providerFullUrl")}
+                        </span>
+                        <Switch
+                          checked={isFullUrl}
+                          onCheckedChange={setIsFullUrl}
+                          aria-label={t("settings.providerFullUrl")}
+                          title={t("settings.providerFullUrl")}
+                        />
+                      </div>
+                    </div>
                     <Input
                       id="modal-baseurl"
                       value={baseUrl}
                       onChange={(event) => setBaseUrl(event.currentTarget.value)}
                     />
+                    {isFullUrl ? (
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {t("settings.providerFullUrlHint")}
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="space-y-1.5">
@@ -1190,6 +1257,21 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
                     </div>
                   </div>
                 </div>
+
+                {providerType !== "gemini" ? (
+                  <div className="mt-3 space-y-1.5">
+                    <Label htmlFor="modal-models-url">{t("settings.providerModelsUrl")}</Label>
+                    <Input
+                      id="modal-models-url"
+                      value={modelsUrl}
+                      placeholder={t("settings.providerModelsUrlPlaceholder")}
+                      onChange={(event) => setModelsUrl(event.currentTarget.value)}
+                    />
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {t("settings.providerModelsUrlHint")}
+                    </p>
+                  </div>
+                ) : null}
 
                 {providerType === "codex" ? (
                   <div className="mt-4 space-y-1.5">
@@ -1524,6 +1606,53 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
                                       }}
                                     />
                                   </div>
+                                  {providerType === "codex" ? (
+                                    <div className="col-span-2 space-y-1.5 max-[720px]:col-span-1">
+                                      <Label>{t("settings.promptCacheHintModelOverride")}</Label>
+                                      <Select
+                                        value={editingModel.model.promptCacheHintMode ?? "inherit"}
+                                        onValueChange={(value) =>
+                                          setEditingModel((prev) =>
+                                            prev
+                                              ? {
+                                                  ...prev,
+                                                  model: {
+                                                    ...prev.model,
+                                                    promptCacheHintMode:
+                                                      value === "inherit"
+                                                        ? undefined
+                                                        : (value as PromptCacheHintMode),
+                                                  },
+                                                }
+                                              : prev,
+                                          )
+                                        }
+                                      >
+                                        <SelectTrigger>
+                                          {/* value≠label：闭合态必须显式渲染本地化标签。 */}
+                                          <SelectValue>
+                                            {t(
+                                              editingModel.model.promptCacheHintMode
+                                                ? PROMPT_CACHE_HINT_LABEL_KEYS[
+                                                    editingModel.model.promptCacheHintMode
+                                                  ]
+                                                : "settings.promptCacheHintMode.inherit",
+                                            )}
+                                          </SelectValue>
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="inherit">
+                                            {t("settings.promptCacheHintMode.inherit")}
+                                          </SelectItem>
+                                          {PROMPT_CACHE_HINT_MODES.map((mode) => (
+                                            <SelectItem key={mode} value={mode}>
+                                              {t(PROMPT_CACHE_HINT_LABEL_KEYS[mode])}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  ) : null}
                                 </div>
 
                                 {!canSaveEditingModel ? (
@@ -1591,14 +1720,18 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
                   <div
                     className={cn(
                       "mt-3 rounded-xl border bg-card px-4 py-3 transition-colors",
-                      promptCachingEnabled && "border-primary/35 bg-primary/[0.04]",
+                      (providerType === "codex"
+                        ? promptCacheHintMode !== "none"
+                        : promptCachingEnabled) && "border-primary/35 bg-primary/[0.04]",
                     )}
                   >
                     <div className="flex items-center gap-3">
                       <span
                         className={cn(
                           "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors",
-                          promptCachingEnabled && "bg-primary/15 text-primary",
+                          (providerType === "codex"
+                            ? promptCacheHintMode !== "none"
+                            : promptCachingEnabled) && "bg-primary/15 text-primary",
                         )}
                       >
                         <Zap className="h-4 w-4" />
@@ -1611,12 +1744,38 @@ function ProviderModal({ providerType, initialData, onSave, onClose }: ModalProp
                             : t("settings.promptCachingDescCodex")}
                         </div>
                       </div>
-                      <DialogSwitch
-                        checked={promptCachingEnabled}
-                        onCheckedChange={setPromptCachingEnabled}
-                        ariaLabel={t("settings.promptCaching")}
-                      />
+                      {providerType === "claude_code" ? (
+                        <DialogSwitch
+                          checked={promptCachingEnabled}
+                          onCheckedChange={setPromptCachingEnabled}
+                          ariaLabel={t("settings.promptCaching")}
+                        />
+                      ) : null}
                     </div>
+                    {providerType === "codex" ? (
+                      <div className="mt-3 border-t pt-3">
+                        <Select
+                          value={promptCacheHintMode}
+                          onValueChange={(value) =>
+                            setPromptCacheHintMode(value as PromptCacheHintMode)
+                          }
+                        >
+                          <SelectTrigger aria-label={t("settings.promptCacheHintMode")}>
+                            {/* value≠label：闭合态必须显式渲染本地化标签。 */}
+                            <SelectValue>
+                              {t(PROMPT_CACHE_HINT_LABEL_KEYS[promptCacheHintMode])}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PROMPT_CACHE_HINT_MODES.map((mode) => (
+                              <SelectItem key={mode} value={mode}>
+                                {t(PROMPT_CACHE_HINT_LABEL_KEYS[mode])}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
                     {providerType === "claude_code" && promptCachingEnabled ? (
                       <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
                         <span className="text-xs text-muted-foreground">

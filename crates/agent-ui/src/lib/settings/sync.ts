@@ -628,11 +628,18 @@ function mergeSyncedSystemSettings(
   }
 
   const currentActivityByPath = new Map<string, number>();
+  const currentWorktreeByPath = new Map<
+    string,
+    NonNullable<AppSettings["system"]["workspaceProjects"][number]["worktree"]>
+  >();
   for (const project of current.workspaceProjects) {
     const pathKey = workspaceProjectPathKey(project.path);
     const lastConversationAt = readWorkspaceProjectLastConversationAt(project);
     if (pathKey && lastConversationAt > 0) {
       currentActivityByPath.set(pathKey, lastConversationAt);
+    }
+    if (pathKey && project.worktree) {
+      currentWorktreeByPath.set(pathKey, project.worktree);
     }
   }
 
@@ -642,16 +649,19 @@ function mergeSyncedSystemSettings(
     workspaceResourceSettings,
     systemProxy,
     workspaceProjects: incomingSystem.workspaceProjects.map((project) => {
+      const pathKey = workspaceProjectPathKey(project.path);
       const lastConversationAt = Math.max(
         readWorkspaceProjectLastConversationAt(project),
-        currentActivityByPath.get(workspaceProjectPathKey(project.path)) ?? 0,
+        currentActivityByPath.get(pathKey) ?? 0,
       );
-      return lastConversationAt > 0
-        ? {
-            ...project,
-            lastConversationAt,
-          }
-        : project;
+      const currentWorktree = currentWorktreeByPath.get(pathKey);
+      return {
+        ...project,
+        ...(lastConversationAt > 0 ? { lastConversationAt } : {}),
+        ...(!Object.hasOwn(project, "worktree") && currentWorktree
+          ? { worktree: currentWorktree }
+          : {}),
+      };
     }),
   };
 }

@@ -1,5 +1,5 @@
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { AlertTriangle, X } from "@liveagent/app/components/icons";
+import { AlertTriangle, X } from "@liveagent/ui/components/IconSet";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "./button";
 
@@ -15,6 +15,8 @@ export type ConfirmDialogOptions = {
   closeLabel?: string;
   tone?: ConfirmDialogTone;
   hideCancel?: boolean;
+  /** Give the safe cancel action primary emphasis and render confirmation as destructive text. */
+  preferCancel?: boolean;
 };
 
 type PendingConfirmDialog = ConfirmDialogOptions & {
@@ -51,6 +53,7 @@ function ConfirmDialog(
     closeLabel = cancelLabel,
     tone = "destructive",
     hideCancel = false,
+    preferCancel = false,
     onCancel,
     onConfirm,
   } = props;
@@ -125,7 +128,7 @@ function ConfirmDialog(
                   render={
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={preferCancel ? "default" : "outline"}
                       autoFocus
                       className="w-full sm:w-auto"
                     />
@@ -136,9 +139,13 @@ function ConfirmDialog(
               )}
               <Button
                 type="button"
-                variant="destructive"
+                variant={preferCancel ? "ghost" : "destructive"}
                 onClick={onConfirm}
-                className="w-full sm:w-auto"
+                className={`w-full sm:w-auto ${
+                  preferCancel
+                    ? "text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    : ""
+                }`}
               >
                 {confirmLabel}
               </Button>
@@ -188,6 +195,7 @@ export function useConfirmDialog() {
       closeLabel={pending.closeLabel}
       tone={pending.tone}
       hideCancel={pending.hideCancel}
+      preferCancel={pending.preferCancel}
       onCancel={() => close(false)}
       onConfirm={() => close(true)}
     />

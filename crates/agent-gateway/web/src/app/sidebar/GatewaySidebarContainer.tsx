@@ -3,32 +3,25 @@
 // list updates, per-row mutations) re-render this subtree only — never
 // GatewayApp. Renders the per-end <ChatHistorySidebar/> view.
 
-import { ChatHistorySidebar } from "@liveagent/ui/components/chat/ChatHistorySidebar";
+import {
+  buildChatHistorySidebarBaseProps,
+  buildChatHistorySidebarConversationProps,
+  buildChatHistorySidebarWorkspaceProps,
+  ChatHistorySidebar,
+  type ChatHistorySidebarContainerSource,
+} from "@liveagent/ui/components/chat/ChatHistorySidebar";
 import { useLocale } from "@liveagent/ui/i18n/index";
 import type { SidebarBatchDeleteOptions } from "@liveagent/ui/lib/sidebar/batchDelete";
 import { deleteSidebarConversations } from "@liveagent/ui/lib/sidebar/batchDelete";
-import {
-  selectConversations,
-  selectListState,
-  selectProjectActivityInputs,
-  selectRunningConversationIds,
-  sidebarShallowEqual,
-} from "@liveagent/ui/lib/sidebar/selectors";
 import type { SidebarSnapshot, SidebarStore } from "@liveagent/ui/lib/sidebar/store";
+import type { TransientSidebarRunningConversation } from "@liveagent/ui/lib/sidebar/transientActivity";
+import { mergeTransientSidebarRunningActivity } from "@liveagent/ui/lib/sidebar/transientActivity";
 import type { SidebarErrorCode } from "@liveagent/ui/lib/sidebar/types";
+import { useSidebarContainerState } from "@liveagent/ui/lib/sidebar/useSidebarContainerState";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
 import { sortWorkspaceProjectsByActivity } from "@liveagent/ui/lib/workspaceProjects";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatHistorySummary } from "@/lib/chat/chatHistory";
-import type { WorkspaceProject } from "@/lib/settings";
-
-function selectMutations(snapshot: SidebarSnapshot) {
-  return snapshot.mutations;
-}
-
-function selectMutationErrors(snapshot: SidebarSnapshot) {
-  return snapshot.mutationErrors;
-}
 
 function selectConversationIndex(snapshot: SidebarSnapshot) {
   return snapshot.byId;
@@ -71,25 +64,13 @@ function useStableCallback<Args extends unknown[], Return>(
   return useCallback((...args: Args) => handlerRef.current(...args), []);
 }
 
-export type GatewaySidebarContainerProps = {
+export type GatewaySidebarContainerProps = Omit<
+  ChatHistorySidebarContainerSource,
+  "onShareConversation"
+> & {
   store: SidebarStore;
-  currentConversationId: string;
-  isOpen: boolean;
-  fontScale?: number;
-  activeView: "chat" | "skills-hub" | "mcp-hub";
-  showProjects: boolean;
-  // Merged (settings + history workdirs), unsorted: sorting happens here on
-  // the store's activity snapshot so project reordering never re-renders
-  // GatewayApp.
-  projects: WorkspaceProject[];
-  activeProjectId?: string;
-  missingProjectPathKeys: ReadonlySet<string>;
-  projectRenamingId: string | null;
-  projectRenameDraft: string;
-  projectsCollapsed: boolean;
-  recentCollapsed: boolean;
-  canShareConversations: boolean;
-  sharedConversationCount: number;
+  // 手动压缩 pending 已按会话 id 键化，多个会话可同时“转圈”（issue #359 缺陷 #3）。
+  transientRunningConversations?: readonly TransientSidebarRunningConversation[];
   // GatewayApp-level sidebar errors (project removal flow); store errors are
   // derived locally and take precedence.
   externalErrorMessage: string | null;
@@ -100,36 +81,13 @@ export type GatewaySidebarContainerProps = {
   // both the browser transport and the desktop Agent are confirmed online.
   sectionsDisabled: boolean;
   isLocalDraftConversationId: (id: string) => boolean;
-  onProjectsCollapsedChange: (collapsed: boolean) => void;
-  onRecentCollapsedChange: (collapsed: boolean) => void;
-  onCreateProject: () => void;
-  onSelectProject: (project: WorkspaceProject) => void;
-  onNewConversationForProject: (project: WorkspaceProject) => void;
-  onBrowseProjectInFileTree: (project: WorkspaceProject) => void;
-  onConfigureProjectResources: (project: WorkspaceProject) => void;
-  onStartRenamingProject: (project: WorkspaceProject) => void;
-  onProjectRenameDraftChange: (value: string) => void;
-  onCommitProjectRename: () => void;
-  onCancelProjectRename: () => void;
-  onSetProjectPinned: (project: WorkspaceProject, isPinned: boolean) => void;
-  onRemoveProject: (project: WorkspaceProject) => void;
-  onArchiveProject: (project: WorkspaceProject) => void;
-  onUnarchiveProject: (project: WorkspaceProject) => void;
-  archivedProjectPathKeys?: ReadonlySet<string>;
-  onNewConversation: () => void;
-  onSelectConversation: (id: string) => void;
   onShareConversation: (item: ChatHistorySummary) => void;
-  onOpenSharedConversations: () => void;
   // User-initiated removal of a local draft row (never hits the backend).
   onLocalDraftDeleted: (id: string) => void;
   // Conversations that left the authoritative index (remote delete, local
   // delete confirmation, reconcile drop): GatewayApp cleans caches and
   // migrates the selection when the displayed conversation vanished.
   onConversationsRemoved: (ids: readonly string[]) => void;
-  onCloseSidebar: () => void;
-  onOpenSettings: () => void;
-  onOpenSkillsHub: () => void;
-  onOpenMcpHub: () => void;
 };
 
 export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
@@ -143,18 +101,29 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
   } = props;
   const { t } = useLocale();
 
-  const items = useSidebarSelector(store, selectConversations);
-  const listState = useSidebarSelector(store, selectListState, sidebarShallowEqual);
-  const scopeKey = useSidebarSelector(store, (snapshot) => snapshot.scopeKey);
-  const runningConversationIds = useSidebarSelector(store, selectRunningConversationIds);
-  const mutations = useSidebarSelector(store, selectMutations);
-  const mutationErrors = useSidebarSelector(store, selectMutationErrors);
-  const projectActivityInputs = useSidebarSelector(
-    store,
-    selectProjectActivityInputs,
-    sidebarShallowEqual,
-  );
+  const {
+    items,
+    listState,
+    scopeKey,
+    runningConversationIds,
+    mutations,
+    mutationErrors,
+    projectActivityInputs,
+  } = useSidebarContainerState(store);
   const conversationIndex = useSidebarSelector(store, selectConversationIndex);
+  const effectiveRunningActivity = useMemo(
+    () =>
+      mergeTransientSidebarRunningActivity(
+        runningConversationIds,
+        projectActivityInputs.runningWorkdirPathKeys,
+        props.transientRunningConversations,
+      ),
+    [
+      projectActivityInputs.runningWorkdirPathKeys,
+      props.transientRunningConversations,
+      runningConversationIds,
+    ],
+  );
 
   // --- Rename UI state (moved out of GatewayApp) ---------------------------
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -214,6 +183,27 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
     clearMutationErrors();
     void store.setPinned(id, isPinned);
   });
+
+  const handleMoveToWorkspace = useStableCallback((id: string, cwd: string) => {
+    if (sectionsDisabled) {
+      return;
+    }
+    clearMutationErrors();
+    void store.setCwd(id, cwd);
+  });
+
+  const handleMoveConversationsToWorkspace = useStableCallback(
+    async (ids: readonly string[], cwd: string) => {
+      if (sectionsDisabled) {
+        return ids;
+      }
+      clearMutationErrors();
+      const results = await Promise.all(
+        ids.map(async (id) => ({ id, moved: await store.setCwd(id, cwd) })),
+      );
+      return results.filter((result) => !result.moved).map((result) => result.id);
+    },
+  );
 
   const handleDeleteConversation = useStableCallback((id: string) => {
     if (sectionsDisabled) {
@@ -315,73 +305,46 @@ export function GatewaySidebarContainer(props: GatewaySidebarContainerProps) {
     () =>
       sortWorkspaceProjectsByActivity(projects, {
         projectActivityUpdatedAts: projectActivityInputs.workdirActivity,
-        runningProjectPathKeys: projectActivityInputs.runningWorkdirPathKeys,
+        runningProjectPathKeys: effectiveRunningActivity.runningProjectPathKeys,
       }),
-    [projectActivityInputs.runningWorkdirPathKeys, projectActivityInputs.workdirActivity, projects],
+    [
+      effectiveRunningActivity.runningProjectPathKeys,
+      projectActivityInputs.workdirActivity,
+      projects,
+    ],
   );
 
   return (
     <ChatHistorySidebar
-      items={items}
-      currentConversationId={props.currentConversationId}
-      busyConversationIds={mutations}
-      runningConversationIds={runningConversationIds}
-      listStatus={listState.status}
-      scopeKey={scopeKey}
-      totalItems={listState.totalCount}
-      hasMore={listState.hasMore}
-      isLoadingMore={listState.isLoadingMore}
-      errorMessage={listErrorMessage}
-      actionErrorMessage={actionErrorMessage}
-      sectionsDisabled={sectionsDisabled}
-      renamingId={renamingId}
-      renameDraft={renameDraft}
-      isOpen={props.isOpen}
-      fontScale={props.fontScale}
-      activeView={props.activeView}
-      showProjects={props.showProjects}
-      projects={sortedProjects}
-      activeProjectId={props.activeProjectId}
-      missingProjectPathKeys={props.missingProjectPathKeys}
-      runningProjectPathKeys={projectActivityInputs.runningWorkdirPathKeys}
-      projectRenamingId={props.projectRenamingId}
-      projectRenameDraft={props.projectRenameDraft}
-      projectsCollapsed={props.projectsCollapsed}
-      recentCollapsed={props.recentCollapsed}
-      onProjectsCollapsedChange={props.onProjectsCollapsedChange}
-      onRecentCollapsedChange={props.onRecentCollapsedChange}
-      onCreateProject={props.onCreateProject}
-      onSelectProject={props.onSelectProject}
-      onNewConversationForProject={props.onNewConversationForProject}
-      onBrowseProjectInFileTree={props.onBrowseProjectInFileTree}
-      onConfigureProjectResources={props.onConfigureProjectResources}
-      onStartRenamingProject={props.onStartRenamingProject}
-      onProjectRenameDraftChange={props.onProjectRenameDraftChange}
-      onCommitProjectRename={props.onCommitProjectRename}
-      onCancelProjectRename={props.onCancelProjectRename}
-      onSetProjectPinned={props.onSetProjectPinned}
-      onRemoveProject={props.onRemoveProject}
-      onArchiveProject={props.onArchiveProject}
-      onUnarchiveProject={props.onUnarchiveProject}
-      archivedProjectPathKeys={props.archivedProjectPathKeys}
-      onNewConversation={props.onNewConversation}
-      onSelectConversation={props.onSelectConversation}
-      onStartRenaming={handleStartRenaming}
-      onRenameDraftChange={setRenameDraft}
-      onCommitRename={handleCommitRename}
-      onCancelRename={handleCancelRename}
-      onSetPinned={handleSetPinned}
-      canShareConversations={props.canShareConversations}
-      sharedConversationCount={props.sharedConversationCount}
-      onShareConversation={props.onShareConversation}
-      onOpenSharedConversations={props.onOpenSharedConversations}
-      onDeleteConversation={handleDeleteConversation}
-      onDeleteConversations={handleDeleteConversations}
-      onLoadMore={handleLoadMore}
-      onCloseSidebar={props.onCloseSidebar}
-      onOpenSettings={props.onOpenSettings}
-      onOpenSkillsHub={props.onOpenSkillsHub}
-      onOpenMcpHub={props.onOpenMcpHub}
+      {...buildChatHistorySidebarBaseProps(props, {
+        items,
+        busyConversationIds: mutations,
+        runningConversationIds: effectiveRunningActivity.runningConversationIds,
+        listState,
+        scopeKey,
+        errorMessage: listErrorMessage,
+        actionErrorMessage,
+        sectionsDisabled,
+        renamingId,
+        renameDraft,
+      })}
+      {...buildChatHistorySidebarWorkspaceProps(
+        props,
+        sortedProjects,
+        effectiveRunningActivity.runningProjectPathKeys,
+      )}
+      {...buildChatHistorySidebarConversationProps(props, {
+        onStartRenaming: handleStartRenaming,
+        onRenameDraftChange: setRenameDraft,
+        onCommitRename: handleCommitRename,
+        onCancelRename: handleCancelRename,
+        onSetPinned: handleSetPinned,
+        onMoveToWorkspace: handleMoveToWorkspace,
+        onMoveConversationsToWorkspace: handleMoveConversationsToWorkspace,
+        onDeleteConversation: handleDeleteConversation,
+        onDeleteConversations: handleDeleteConversations,
+        onLoadMore: handleLoadMore,
+      })}
     />
   );
 }

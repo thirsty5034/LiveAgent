@@ -41,7 +41,7 @@
 - CRLF 与 CR 可以在一个明确边界规范为 LF，但不得增加、删除或移动逻辑换行。
 - 输入、发送和渲染不得分别执行可叠加的换行扩增转换。
 - 手工输入与粘贴得到相同逻辑文本时，payload 与渲染必须相同。
-- 用户消息的纯文本换行/块间距策略必须局部生效；assistant、thinking、tool、AskUserQuestion、TodoWrite 和 system 的 Markdown 语义保持不变。
+- 用户消息的纯文本换行/块间距策略必须局部生效；assistant、thinking、tool、AskUserQuestion、任务工具和 system 的 Markdown 语义保持不变。
 - GUI、Gateway WebUI 与桌面共用 React 路径保持相同数据和视觉不变量。
 - 保留消息 identity、顺序、虚拟化、滚动跟随、composer 布局和任务进度指示器。
 - 不用 `trim()`、全局空白折叠、固定高度、隐藏溢出或 O(n²)/同步全量 DOM 遍历掩盖问题。
@@ -94,7 +94,7 @@
 ## 人工验收与公开截图
 
 - 2026-08-01：用户按验收矩阵完成测试并明确回复“通过”；因此提交/远端门禁解除。
-- 用户回复后立即尝试捕获 Tauri 当前窗口，但窗口仍停在既有 TodoWrite 会话，没有显示换行样例；该文件 `acceptance-tauri-final.png` 不作为 PR 证据，也不对既有会话做自动切换或发送。
+- 用户回复后立即尝试捕获 Tauri 当前窗口，但窗口仍停在既有任务会话，没有显示换行样例；该文件 `acceptance-tauri-final.png` 不作为 PR 证据，也不对既有会话做自动切换或发送。
 - 公开证据改由已通过的实际生产模块 fixture 生成，不修改产品源码、不触发模型调用：
   - GUI：`target/paste-newline-artifacts/runtime/screenshots/acceptance-gui-pipeline-2026-08-01T01-30-28-742Z.png`
   - Gateway WebUI：`target/paste-newline-artifacts/runtime/screenshots/acceptance-webui-pipeline-2026-08-01T01-31-45-337Z.png`

@@ -34,6 +34,7 @@ func vetAgentRequest(sm session.AgentView, env *gatewayv2.GatewayEnvelope) error
 		*gatewayv2.GatewayEnvelope_HistoryDelete,
 		*gatewayv2.GatewayEnvelope_HistoryPrefix,
 		*gatewayv2.GatewayEnvelope_HistoryPin,
+		*gatewayv2.GatewayEnvelope_HistorySetCwd,
 		*gatewayv2.GatewayEnvelope_HistoryShareGet,
 		*gatewayv2.GatewayEnvelope_HistoryShareSet,
 		*gatewayv2.GatewayEnvelope_HistoryWorkdirs,
@@ -140,7 +141,7 @@ func vetChatFileOpen(req *gatewayv2.ChatFileOpenRequest) error {
 // enable_web_git 门控，读操作（status/log/diff 等）始终放行。
 func gitActionIsWrite(action string) bool {
 	switch action {
-	case "clone", "clone_start", "clone_cancel", "clone_dismiss", "init", "switch_branch", "create_branch", "stage", "stage_all", "unstage", "unstage_all", "discard", "discard_all", "add_to_gitignore", "commit", "fetch", "pull", "set_remote", "push", "delete_branch", "rename_branch", "stash_push", "stash_pop":
+	case "clone", "clone_start", "clone_cancel", "clone_dismiss", "init", "switch_branch", "create_branch", "create_worktree", "stage", "stage_all", "unstage", "unstage_all", "discard", "discard_all", "add_to_gitignore", "commit", "fetch", "pull", "set_remote", "push", "delete_branch", "rename_branch", "remove_worktree", "stash_push", "stash_pop":
 		return true
 	default:
 		return false

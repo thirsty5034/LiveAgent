@@ -1,18 +1,5 @@
-import {
-  Check,
-  ChevronDown,
-  ChevronUp,
-  Copy,
-  ExternalLink,
-  X,
-} from "@liveagent/app/components/icons";
-import {
-  type ChatFileLink,
-  decodeChatFileLinkPayload,
-  encodeChatFileLink,
-  parseChatFileLink,
-} from "@liveagent/app/lib/chat/chatFileLinks";
 import { openUrl } from "@liveagent/app/shims/tauriOpener";
+import { ChevronDown, ChevronUp, Copy, ExternalLink, X } from "@liveagent/ui/components/IconSet";
 import { useLocale } from "@liveagent/ui/i18n/index";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
@@ -40,12 +27,19 @@ import {
   type StreamdownTranslations,
 } from "streamdown";
 import {
+  type ChatFileLink,
+  decodeChatFileLinkPayload,
+  encodeChatFileLink,
+  parseChatFileLink,
+} from "../lib/chat/chatFileLinks";
+import {
   getCollapsedCodeBlockPreview,
   resolveCodeBlockRenderPolicy,
 } from "../lib/markdownCodeBlockPolicy";
 import { normalizeLatexDelimiters } from "../lib/normalizeLatexDelimiters";
 import { cn } from "../lib/shared/utils";
 import { Button } from "./ui/button";
+import { CopyButton } from "./ui/copy-button";
 
 const CHAT_FILE_NODE_DATA_KEY = "liveagentChatFileLink";
 const LIVEAGENT_FILE_PROTOCOL = "liveagent-file:";
@@ -400,16 +394,6 @@ export function MarkdownLink(props: MarkdownFileLinkProps) {
   return <MarkdownExternalLink {...props} />;
 }
 
-async function copyCodeBlockText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch (error) {
-    console.error("Failed to copy code block", error);
-    return false;
-  }
-}
-
 function getCodeTextFromChild(child: ReactElement<StreamdownCodeChildProps>) {
   const raw = child.props.children;
   if (typeof raw === "string") return raw;
@@ -432,26 +416,16 @@ function ensureCodeBlockLanguage(child: ReactElement<StreamdownCodeChildProps>) 
 
 function CodeBlockActions({ code }: { code: string }) {
   const { t } = useLocale();
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    if (!(await copyCodeBlockText(code))) return;
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
 
   return (
     <div className="pointer-events-none absolute right-0 top-0 z-20 flex h-8 items-center justify-end">
-      <div className="pointer-events-auto flex shrink-0 items-center gap-2 rounded-md bg-background/95 px-1.5 py-1">
-        <button
-          type="button"
-          aria-label={copied ? t("chat.markdown.copied") : t("chat.markdown.copyCode")}
-          title={copied ? t("chat.markdown.copied") : t("chat.markdown.copyCode")}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-md p-1 text-muted-foreground transition-colors hover:bg-foreground/[0.04] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35"
-          onClick={() => void handleCopy()}
-        >
-          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-        </button>
+      <div className="pointer-events-auto flex shrink-0 items-center rounded-md bg-background/95 px-1.5 py-1">
+        <CopyButton
+          value={code}
+          label={t("chat.markdown.copyCode")}
+          copiedLabel={t("chat.markdown.copied")}
+          className="h-6 w-6 p-1 hover:bg-foreground/[0.04]"
+        />
       </div>
     </div>
   );

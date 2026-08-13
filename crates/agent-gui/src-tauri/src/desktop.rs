@@ -234,6 +234,8 @@ macro_rules! app_invoke_handler {
             commands::adapters::git_rename_branch,
             commands::adapters::git_stash_push,
             commands::adapters::git_stash_pop,
+            commands::adapters::git_create_worktree,
+            commands::adapters::git_remove_worktree,
             commands::adapters::system_pick_folder,
             commands::adapters::system_pick_file,
             commands::adapters::system_create_project_folder,

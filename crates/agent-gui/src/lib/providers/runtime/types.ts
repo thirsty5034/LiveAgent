@@ -1,21 +1,16 @@
 import type { SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { SharedModelOption } from "@liveagent/ui/lib/models/modelOptions";
 import type {
   CodexRequestFormat,
   CustomProvider,
+  PromptCacheHintMode,
   ProviderId,
   ProviderModelConfig,
   ReasoningLevel,
 } from "../../settings";
 import type { StreamRetryConfig } from "./streamRetry";
 
-export type ModelOption = {
-  value: string; // encodes customProviderId::model
-  label: string; // model id
-  providerId: string; // stable custom provider identity (for grouping)
-  providerName: string; // provider display name
-  providerType: ProviderId; // routes Claude Code, Codex, Gemini, etc.
-  model: string;
-};
+export type ModelOption = SharedModelOption<ProviderId>;
 
 declare const PROVIDER_RUNTIME_CONFIG_BRAND: unique symbol;
 
@@ -31,11 +26,13 @@ declare const PROVIDER_RUNTIME_CONFIG_BRAND: unique symbol;
 export type ProviderRuntimeConfig = {
   readonly [PROVIDER_RUNTIME_CONFIG_BRAND]: true;
   baseUrl: string;
+  isFullUrl: boolean;
   apiKey: string;
   customHeaders?: CustomProvider["customHeaders"];
   requestFormat?: CodexRequestFormat;
   reasoning?: ReasoningLevel;
   promptCachingEnabled?: boolean;
+  promptCacheHintMode?: PromptCacheHintMode;
   promptCacheRetention?: "short" | "long";
   nativeWebSearchEnabled?: boolean;
   useSystemProxy?: boolean;

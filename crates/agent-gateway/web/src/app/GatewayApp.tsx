@@ -1,43 +1,52 @@
 import { ApplicationView } from "@liveagent/ui/application/ApplicationView";
+import { useApplicationViewState } from "@liveagent/ui/application/useApplicationViewState";
 import { AppErrorBoundary } from "@liveagent/ui/components/AppErrorBoundary";
+import { FileDropOverlay } from "@liveagent/ui/components/chat/FileDropOverlay";
 import type {
   MentionComposerDraft,
   MentionComposerHandle,
 } from "@liveagent/ui/components/chat/MentionComposer";
 import { type NotifyItem, NotifyToast } from "@liveagent/ui/components/chat/NotifyToast";
 import { SharedHistoryManagerModal } from "@liveagent/ui/components/chat/SharedHistoryManagerModal";
-import { TaskProgressIndicator } from "@liveagent/ui/components/chat/TaskProgressIndicator";
+import { TaskProgressBar } from "@liveagent/ui/components/chat/TaskProgressBar";
 import { ToolApprovalBar } from "@liveagent/ui/components/chat/ToolApprovalBar";
-import { useSequencedTaskProgress } from "@liveagent/ui/components/chat/useSequencedTaskProgress";
 import { WorkspaceResourceSettingsDrawer } from "@liveagent/ui/components/chat/WorkspaceResourceSettingsDrawer";
-import type {
-  GitCommitContextPayload,
-  GitFileContextPayload,
-} from "@liveagent/ui/components/project-tools/git-review/index";
+import { ChevronDown } from "@liveagent/ui/components/IconSet";
+import { ProjectToolsPanelToggle } from "@liveagent/ui/components/project-tools/ProjectToolsPanelToggle";
 import { RightDockPanel } from "@liveagent/ui/components/project-tools/RightDockPanel";
-import { Button } from "@liveagent/ui/components/ui/button";
 import { useConfirmDialog } from "@liveagent/ui/components/ui/confirm-dialog";
 import { ScrollArea } from "@liveagent/ui/components/ui/scroll-area";
-import { type Locale, LocaleContext, t as translate } from "@liveagent/ui/i18n/index";
+import { WorkspaceOverlayHost } from "@liveagent/ui/components/workspace-editor/WorkspaceOverlayHost";
+import { LocaleContext, t as translate, useLocaleContextValue } from "@liveagent/ui/i18n/index";
 import { normalizeLogicalLineEndings } from "@liveagent/ui/lib/chat/composerText";
-import { openChatFileLink } from "@liveagent/ui/lib/chat/openChatFileLink";
-import {
-  selectTodoProgressUpdates,
-  type TodoProgressUpdate,
-} from "@liveagent/ui/lib/chat/taskProgress";
+import { deriveContextUsageTokens } from "@liveagent/ui/lib/chat/contextUsage";
+import { queuedChatTurnHasContent } from "@liveagent/ui/lib/chat/queuedChatTurn";
+import { selectLatestTaskProgress } from "@liveagent/ui/lib/chat/taskProgress";
 import {
   readToolApprovalDeadlineAt,
   readToolApprovalPending,
   readToolApprovalSummary,
 } from "@liveagent/ui/lib/chat/toolApprovalArgs";
-import { memoryDeleteProject } from "@liveagent/ui/lib/memory/api";
+import type { PendingUploadedFile } from "@liveagent/ui/lib/chat/uploadedFiles";
+import { mergePendingUploadedFiles } from "@liveagent/ui/lib/chat/uploadedFiles";
+import { useChangedFilesActions } from "@liveagent/ui/lib/chat/useChangedFilesActions";
+import { useChatFileLinkNavigation } from "@liveagent/ui/lib/chat/useChatFileLinkNavigation";
+import {
+  useComposerActions,
+  useComposerSkillSelection,
+  useInsertCodeReviewSkill,
+} from "@liveagent/ui/lib/chat/useComposerActions";
+import { useRightDockSettings } from "@liveagent/ui/lib/projectTools/useRightDockSettings";
+import { useSettingsOverlay } from "@liveagent/ui/lib/settings/useSettingsOverlay";
 import { createUuid } from "@liveagent/ui/lib/shared/id";
-import { mergeAlwaysEnabledSkillNames } from "@liveagent/ui/lib/skills/index";
+import { useChatSkills } from "@liveagent/ui/lib/skills/useChatSkills";
 import { terminalSessionBelongsToProject } from "@liveagent/ui/lib/terminal/sessionStore";
-import type { TerminalSession } from "@liveagent/ui/lib/terminal/types";
+import { useWorkspaceProjectDeletion } from "@liveagent/ui/lib/useWorkspaceProjectRemoval";
+import { useWorkspaceProjectSettingsActions } from "@liveagent/ui/lib/workspaceProjectRemoval";
 import {
   ChatComposerBar,
   type ChatQueueTurnPreview,
+  type ContextUsageTokensSource,
 } from "@liveagent/ui/pages/chat/ChatComposerBar";
 import { SettingsPage } from "@liveagent/ui/pages/settings/SettingsPage";
 import {
@@ -50,9 +59,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronDown, PanelRightClose, PanelRightOpen, Terminal } from "@/components/icons";
 import { registerAskUserQuestionAnswerHandler } from "@/lib/chat/askUserQuestionBridge";
-import type { ChatFileLink } from "@/lib/chat/chatFileLinks";
 import type { ChatHistorySummary } from "@/lib/chat/chatHistory";
 import { buildModelOptions } from "@/lib/chat/chatPageHelpers";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
@@ -65,7 +72,6 @@ import {
   readHistoryWindowCounts,
   trimLeadingHeadlessEntries,
 } from "@/lib/chat/historyWindow";
-import type { CodeMentionReference } from "@/lib/chat/mentionReferences";
 import { isChatRuntimeProtocolIncompatible } from "@/lib/chat/runtimeCompatibility";
 import { createActivityStore } from "@/lib/chat/stream/activityStore";
 import {
@@ -88,8 +94,6 @@ import {
   registerToolApprovalDecisionHandler,
   submitToolApprovalDecision,
 } from "@/lib/chat/toolApprovalBridge";
-import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
-import { mergePendingUploadedFiles } from "@/lib/chat/uploadedFiles";
 import {
   buildOptimisticConversationTitle,
   type ChatEntry,
@@ -112,78 +116,28 @@ import {
   findProviderModelConfig,
   getChatRuntimeReasoningLevelsForProvider,
   getNextTheme,
-  getRightDockFileTreeState,
-  getRightDockProjectState,
-  getSshProjectHostIds,
   isAgentDevMode,
   isRightDockSingletonTabOpen,
   isThinkingAlwaysOnForModel,
   normalizeChatRuntimeControlsForProvider,
   openRightDockSingletonTab,
   parseSelectedModelJson,
-  type RightDockFileTreeStatePatch,
-  type RightDockProjectState,
-  removeRightDockProjectState,
-  resetWorkspaceResourceSettings,
   resolveEffectiveTheme,
   resolveWorkspaceProjects,
   resolveWorkspaceResources,
   type SelectedModel,
   setSelectedModel,
   updateChatRuntimeControlsForProvider,
-  updateChatTranscriptWidth,
   updateCustomSettings,
-  updateRightDockFileTreeState,
-  updateRightDockProjectState,
-  updateRightDockWidth,
-  updateSkills,
-  updateSshProjectHostIds,
-  updateSystem,
+  updateExecutionModeFromChatSelection,
   updateWorkspaceResourceSettings,
   type WorkspaceProject,
   workspaceProjectPathKey,
 } from "@/lib/settings";
 import { createGatewayWorkspaceActivityClient } from "@/lib/workspace-activity/gatewayWorkspaceActivityClient";
-import { queuedChatTurnHasContent } from "@/pages/chat/queue/chatTurnQueue";
-import { useChatSkills } from "@/pages/chat/useChatSkills";
 import type { SectionId } from "@/pages/settings/types";
 
 const LOCAL_DRAFT_PREFIX = "__local_draft__:";
-
-function CurrentTaskProgress(props: {
-  updates: readonly TodoProgressUpdate[];
-  isConversationRunning: boolean;
-  locale: Locale;
-}) {
-  const { updates, isConversationRunning, locale } = props;
-  const snapshot = useSequencedTaskProgress(updates, isConversationRunning);
-  const labels = useMemo(() => {
-    if (!snapshot) return null;
-    return {
-      title: translate("chat.taskProgress.title", locale),
-      step: translate("chat.taskProgress.step", locale)
-        .replace("{current}", String(snapshot.currentStep))
-        .replace("{total}", String(snapshot.totalCount)),
-      completedCount: `${snapshot.completedCount}/${snapshot.totalCount} ${translate(
-        "chat.taskProgress.completedCount",
-        locale,
-      )}`,
-      running: translate("chat.taskProgress.running", locale),
-      pending: translate("chat.taskProgress.pending", locale),
-      paused: translate("chat.taskProgress.paused", locale),
-      completed: translate("chat.taskProgress.completed", locale),
-    };
-  }, [locale, snapshot]);
-
-  if (!snapshot || !labels) return null;
-  return (
-    <TaskProgressIndicator
-      snapshot={snapshot}
-      isConversationRunning={isConversationRunning}
-      labels={labels}
-    />
-  );
-}
 
 function createLocalDraftConversationId() {
   return `${LOCAL_DRAFT_PREFIX}${createUuid()}`;
@@ -192,18 +146,13 @@ function isLocalDraftConversationId(id: string) {
   return id.trim().startsWith(LOCAL_DRAFT_PREFIX);
 }
 
-import {
-  type ChangedFilesActions,
-  ChangedFilesActionsProvider,
-} from "@liveagent/ui/components/chat/ChangedFilesCard";
+import { ChangedFilesActionsProvider } from "@liveagent/ui/components/chat/ChangedFilesCard";
 import { HistoryShareModal } from "@liveagent/ui/components/chat/HistoryShareModal";
 import { WorkspaceCloneModal } from "@liveagent/ui/components/chat/WorkspaceCloneModal";
 import {
   type WorkspaceCloneTask,
   WorkspaceCloneTaskOverlay,
 } from "@liveagent/ui/components/chat/WorkspaceCloneTaskOverlay";
-import type { GitReviewFocusRequest } from "@liveagent/ui/components/project-tools/RightDockContext";
-import { expandedPathsForFileTreePath } from "@liveagent/ui/components/project-tools/rightDockModel";
 import { buildFloorEntries } from "@liveagent/ui/lib/chat-floor-nav/floorModel";
 import { useScrollFollow } from "@liveagent/ui/lib/chat-scroll/useScrollFollow";
 import {
@@ -214,9 +163,15 @@ import { sortSidebarConversations } from "@liveagent/ui/lib/sidebar/reconcile";
 import { createSidebarStore } from "@liveagent/ui/lib/sidebar/store";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
 import {
+  assignWorkspaceProjectToGroup,
+  createWorkspaceProjectFromPath,
+  ensureWorktreeProjectGroup,
+  fallbackWorkspaceProjectName,
   findWorkspaceProject,
+  getDefaultWorkspaceProjectPath,
   mergeWorkspaceProjectsWithHistory,
 } from "@liveagent/ui/lib/workspaceProjects";
+import type { WorkspaceProjectGroup } from "@liveagent/ui/lib/workspaceProjectTypes";
 import { FloorNavRail } from "@liveagent/ui/pages/chat/transcript/FloorNavRail";
 import {
   CHAT_TRANSCRIPT_WIDTH_CSS_VAR,
@@ -258,18 +213,14 @@ import {
   MAX_UPLOAD_FILES,
   MCP_HUB_BROWSER_TITLE,
   NEW_CONVERSATION_BROWSER_TITLE,
-  PROJECT_HISTORY_DELETE_PAGE_SIZE,
   PROTECTED_DRAFT_CONVERSATION,
   SHARED_HISTORY_BROWSER_TITLE,
   SHARED_HISTORY_LIST_PAGE_SIZE,
   SKILLS_HUB_BROWSER_TITLE,
 } from "./constants";
-import { FileDropOverlay } from "./FileDropOverlay";
 import { HistorySwitchLoadingOverlay } from "./HistorySwitchLoadingOverlay";
 import {
-  createWorkspaceProjectFromPath,
   formatTranslation,
-  getDefaultWorkspaceProjectPath,
   isMobileSidebarLayout,
   resolveVisibleConversationId,
   shouldOpenSidebarByDefault,
@@ -286,12 +237,19 @@ import {
   reduceGatewaySidebarStatusFreshness,
   shouldDisableGatewaySidebarSections,
 } from "./sidebar/gatewaySidebarAvailability";
-import type { ModelProviderSource, OverlayState, SendChatFn, SendChatOptions } from "./types";
+import type { ModelProviderSource, SendChatFn, SendChatOptions } from "./types";
 import { UserMenu } from "./UserMenu";
-import { WorkspaceOverlayHost } from "./WorkspaceOverlayHost";
 
 const STALE_HISTORY_RETRY_INITIAL_DELAY_MS = 1_000;
 const STALE_HISTORY_RETRY_MAX_DELAY_MS = 30_000;
+const MANUAL_COMPACTION_TIMEOUT_MS = 5 * 60_000;
+
+type ManualCompactPendingRequest = {
+  conversationId: string;
+  operationId: string;
+  workdir: string;
+  startedAt: number;
+};
 
 export default function GatewayApp() {
   const historyShareToken = useMemo(() => parseHistoryShareToken(), []);
@@ -326,6 +284,35 @@ export default function GatewayApp() {
     ReadonlyMap<string, SelectedModel>
   >(new Map());
   const [chatError, setChatError] = useState<string | null>(null);
+  // 用量环手动压缩：以 operationId 关联桌面终态，避免 accepted 被误当作完成。
+  // 按会话 id 键化（issue #359 缺陷 #3）：不同会话各自独立 pending，一个会话压缩
+  // 期间绝不静默屏蔽另一个会话的压缩请求。state 与 ref 经唯一 setter/clearer 同步
+  // 写以保证两者一致。
+  const [manualCompactPendingByConversation, setManualCompactPendingState] = useState<
+    ReadonlyMap<string, ManualCompactPendingRequest>
+  >(() => new Map());
+  const manualCompactPendingRef = useRef<ReadonlyMap<string, ManualCompactPendingRequest>>(
+    manualCompactPendingByConversation,
+  );
+  const setManualCompactPendingRequest = useCallback((request: ManualCompactPendingRequest) => {
+    const next = new Map(manualCompactPendingRef.current);
+    next.set(request.conversationId, request);
+    manualCompactPendingRef.current = next;
+    setManualCompactPendingState(next);
+  }, []);
+  const clearManualCompactPendingRequest = useCallback(
+    (conversationId: string, operationId: string) => {
+      const current = manualCompactPendingRef.current;
+      const pending = current.get(conversationId);
+      if (!pending || pending.operationId !== operationId) return false;
+      const next = new Map(current);
+      next.delete(conversationId);
+      manualCompactPendingRef.current = next;
+      setManualCompactPendingState(next);
+      return true;
+    },
+    [],
+  );
   // Top-right toast stack for upload/attachment feedback — mirrors the GUI's
   // NotifyToast usage so upload failures never render as conversation output.
   const [notifyItems, setNotifyItems] = useState<NotifyItem[]>([]);
@@ -357,12 +344,18 @@ export default function GatewayApp() {
   // Bumped whenever the command pipeline's pending set changes so busy state
   // re-derives.
   const [pendingCommandRevision, setPendingCommandRevision] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const {
+    settingsOpen,
+    overlay,
+    openSettingsOverlay,
+    closeSettingsOverlay,
+    handleSettingsOverlayTransitionEnd,
+    resetSettingsOverlay,
+  } = useSettingsOverlay();
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [workspaceCreateModalOpen, setWorkspaceCreateModalOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SectionId>("system");
   const [settingsProviderId, setSettingsProviderId] = useState<string>();
-  const [overlay, setOverlay] = useState<OverlayState>("closed");
   const { settings, setSettings, settingsSyncReady, settingsSyncError, settingsSaveState } =
     useGatewaySettingsSync({ token, api, activeAgentId: activeAgentScope });
   const effectiveTheme = resolveEffectiveTheme(settings.theme);
@@ -398,11 +391,14 @@ export default function GatewayApp() {
   const [sharedHistoryListError, setSharedHistoryListError] = useState<string | null>(null);
   const [sharedHistoryItems, setSharedHistoryItems] = useState<ChatHistorySummary[]>([]);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
-  const [resourceSettingsProject, setResourceSettingsProject] = useState<WorkspaceProject | null>(
-    null,
-  );
-  const [rightDockOpen, setRightDockOpen] = useState(false);
+  const {
+    activeView,
+    setActiveView,
+    resourceSettingsProject,
+    setResourceSettingsProject,
+    rightDockOpen,
+    setRightDockOpen,
+  } = useApplicationViewState<WorkspaceProject>();
   const { confirm: requestConfirmDialog, dialog: confirmDialog } = useConfirmDialog();
   // Both elements arrive via callback refs → state so the scroll-follow hook
   // re-binds on element identity change and can never keep listeners on a
@@ -1241,18 +1237,23 @@ export default function GatewayApp() {
       const pathKey = project.path.trim();
       if (!pathKey) return;
       const normalizedPathKey = workspaceProjectPathKey(pathKey);
-      const targetProject =
-        workspaceProjects.find(
-          (item) =>
-            workspaceProjectPathKey(item.path) === normalizedPathKey || item.id === project.id,
-        ) ?? project;
+      const matchedProject = workspaceProjects.find(
+        (item) =>
+          workspaceProjectPathKey(item.path) === normalizedPathKey || item.id === project.id,
+      );
+      const targetProject = matchedProject
+        ? {
+            ...matchedProject,
+            ...(project.worktree ? { worktree: project.worktree } : {}),
+          }
+        : project;
       setActiveWorkspaceProjectId(targetProject.id);
       setSettings((prev) => {
         const existing = prev.system.workspaceProjects.find(
           (item) =>
             workspaceProjectPathKey(item.path) === normalizedPathKey || item.id === project.id,
         );
-        const nextProject = existing ?? targetProject;
+        const nextProject = existing ? { ...targetProject, id: existing.id } : targetProject;
         const workspaceProjects = existing
           ? prev.system.workspaceProjects.map((item) =>
               item.id === existing.id
@@ -1266,6 +1267,7 @@ export default function GatewayApp() {
                         : nextProject.kind === "history"
                           ? item.kind
                           : nextProject.kind,
+                    worktree: nextProject.worktree ?? item.worktree,
                     updatedAt: item.updatedAt,
                     lastConversationAt:
                       Math.max(item.lastConversationAt ?? 0, nextProject.lastConversationAt ?? 0) ||
@@ -1467,6 +1469,133 @@ export default function GatewayApp() {
       void sidebarStore.refreshWorkdirs("new-workdir");
     },
     [activateWorkspaceProject, sidebarStore],
+  );
+
+  const handleOpenWorktree = useCallback(
+    (worktree: { path: string; repositoryPath: string; branch: string }) => {
+      const path = worktree.path.trim();
+      const repositoryPath = worktree.repositoryPath.trim();
+      const worktreeKey = workspaceProjectPathKey(path);
+      const currentProjectPath = displayedConversationWorkdirRef.current.trim();
+      if (!path || !repositoryPath || !worktreeKey) return;
+      const branch = worktree.branch.trim();
+      const nextProject: WorkspaceProject = {
+        ...createWorkspaceProjectFromPath(path, "managed"),
+        worktree: {
+          repositoryPath,
+          ...(branch ? { branch } : {}),
+        },
+      };
+      activateWorkspaceProject(nextProject);
+      setSettings((prev) => {
+        const sourceProject = prev.system.workspaceProjects.find(
+          (project) =>
+            workspaceProjectPathKey(project.path) === workspaceProjectPathKey(repositoryPath),
+        );
+        const ensured = ensureWorktreeProjectGroup(prev.system.workspaceProjectGroups, {
+          name: sourceProject?.name || fallbackWorkspaceProjectName(repositoryPath),
+          sourceProjectPath: repositoryPath,
+        });
+        let workspaceProjectGroups = assignWorkspaceProjectToGroup(
+          ensured.groups,
+          ensured.groupId,
+          repositoryPath,
+        );
+        if (currentProjectPath) {
+          workspaceProjectGroups = assignWorkspaceProjectToGroup(
+            workspaceProjectGroups,
+            ensured.groupId,
+            currentProjectPath,
+          );
+        }
+        workspaceProjectGroups = assignWorkspaceProjectToGroup(
+          workspaceProjectGroups,
+          ensured.groupId,
+          path,
+        );
+        return { ...prev, system: { ...prev.system, workspaceProjectGroups } };
+      });
+      void sidebarStore.refreshWorkdirs("new-workdir");
+    },
+    [activateWorkspaceProject, setSettings, sidebarStore],
+  );
+
+  const updateWorkspaceProjectGroups = useCallback(
+    (updater: (groups: WorkspaceProjectGroup[]) => WorkspaceProjectGroup[]) => {
+      setSettings((prev) => {
+        const next = updater(prev.system.workspaceProjectGroups);
+        if (next === prev.system.workspaceProjectGroups) return prev;
+        return { ...prev, system: { ...prev.system, workspaceProjectGroups: next } };
+      });
+    },
+    [setSettings],
+  );
+
+  const handleCreateWorkspaceGroup = useCallback(
+    (nameInput: string) => {
+      const name = nameInput.trim();
+      if (!name) return;
+      const now = Date.now();
+      updateWorkspaceProjectGroups((groups) => [
+        ...groups,
+        { id: createUuid(), name, projectPaths: [], createdAt: now, updatedAt: now },
+      ]);
+    },
+    [updateWorkspaceProjectGroups],
+  );
+
+  const handleRenameWorkspaceGroup = useCallback(
+    (groupId: string, nameInput: string) => {
+      const name = nameInput.trim();
+      if (!name) return;
+      updateWorkspaceProjectGroups((groups) =>
+        groups.map((group) =>
+          group.id === groupId ? { ...group, name, updatedAt: Date.now() } : group,
+        ),
+      );
+    },
+    [updateWorkspaceProjectGroups],
+  );
+
+  const handleDeleteWorkspaceGroup = useCallback(
+    (groupId: string) => {
+      updateWorkspaceProjectGroups((groups) => groups.filter((group) => group.id !== groupId));
+    },
+    [updateWorkspaceProjectGroups],
+  );
+
+  const handleMoveWorkspaceProjectToGroup = useCallback(
+    (projectPath: string, groupId: string | null) => {
+      const pathKey = workspaceProjectPathKey(projectPath);
+      if (!pathKey) return;
+      updateWorkspaceProjectGroups((groups) => {
+        if (groupId === null) {
+          return groups.map((group) => {
+            const projectPaths = group.projectPaths.filter(
+              (path) => workspaceProjectPathKey(path) !== pathKey,
+            );
+            return projectPaths.length === group.projectPaths.length
+              ? group
+              : { ...group, projectPaths, updatedAt: Date.now() };
+          });
+        }
+        return assignWorkspaceProjectToGroup(groups, groupId, projectPath);
+      });
+    },
+    [updateWorkspaceProjectGroups],
+  );
+
+  const handleToggleWorkspaceGroupCollapsed = useCallback(
+    (groupId: string) => {
+      updateWorkspaceProjectGroups((groups) =>
+        groups.map((group) =>
+          group.id === groupId
+            ? { ...group, collapsed: !group.collapsed, updatedAt: Date.now() }
+            : group,
+        ),
+      );
+    },
+    [updateWorkspaceProjectGroups],
   );
 
   const commitWorkspaceProjectRename = useCallback(
@@ -1765,6 +1894,36 @@ export default function GatewayApp() {
     };
   }, [activityStore, api, chatCommandPipeline]);
 
+  const settleManualCompactionResult = useCallback(
+    (
+      targetConversationId: string,
+      result: {
+        operationId: string;
+        status: "compacted" | "failed" | "busy" | "skipped";
+        message?: string;
+      },
+    ) => {
+      const pending = manualCompactPendingRef.current.get(targetConversationId);
+      if (!pending || pending.operationId !== result.operationId) {
+        return;
+      }
+      if (!clearManualCompactPendingRequest(targetConversationId, result.operationId)) return;
+      if (result.status === "compacted") {
+        return;
+      }
+      const fallbackKey =
+        result.status === "skipped"
+          ? "chat.manualCompactBelowThreshold"
+          : result.status === "failed"
+            ? "chat.manualCompactFailed"
+            : "chat.manualCompactRejected";
+      // 缺陷 #4：无论目标会话是否正被显示都提示——用户切走后压缩失败/跳过也要
+      // 看到结果。message 本身已说明这是压缩结果，故不再以 isDisplayedConversation 门控。
+      setChatError(result.message || translate(fallbackKey, settings.locale));
+    },
+    [clearManualCompactPendingRequest, settings.locale],
+  );
+
   // App-level observation of the displayed conversation's stream: titles,
   // pipeline settlement, queue refreshes, tunnel side effects, and the one
   // scroll-compensated fold commit at run_started.
@@ -1780,6 +1939,10 @@ export default function GatewayApp() {
           ? ((event as { client_request_id: string }).client_request_id ?? "").trim()
           : "";
       switch (event.type) {
+        case "manual_compaction_result": {
+          settleManualCompactionResult(targetConversationId, event);
+          return;
+        }
         case "run_started": {
           // The fold this event triggers in the store is a pure data
           // transition of the single row list (identical row keys, same DOM
@@ -1839,6 +2002,7 @@ export default function GatewayApp() {
       chatCommandPipeline,
       handleTunnelManagerChatEvent,
       refreshChatQueueSnapshot,
+      settleManualCompactionResult,
     ],
   );
 
@@ -1883,6 +2047,15 @@ export default function GatewayApp() {
   // regardless of running state, which is what makes GUI queue auto-sends
   // race-free: the next run's events simply flow in).
   const displayedConversationId = resolveVisibleConversationId(selectedHistoryId, conversationId);
+  // composer 的用量环禁点：仅当显示会话自身有 pending（缺陷 #3：不再被其他会话的
+  // pending 静默屏蔽）。
+  const manualCompactPending = manualCompactPendingByConversation.has(displayedConversationId);
+  // sidebar 瞬态“转圈”：所有 pending 会话（可多个）——ManualCompactPendingRequest
+  // 结构上兼容 TransientSidebarRunningConversation（conversationId + workdir）。
+  const manualCompactTransientConversations = useMemo(
+    () => Array.from(manualCompactPendingByConversation.values()),
+    [manualCompactPendingByConversation],
+  );
 
   // 会话生效模型：本地 override > sidebar 行携带的持久化选择 > 全局默认。
   const selectionForConversation = useCallback(
@@ -1936,6 +2109,79 @@ export default function GatewayApp() {
     pendingRevision: pendingCommandRevision,
   });
   displayedConversationBusyRef.current = displayedConversationBusy;
+
+  // 后台订阅接线经 ref 稳定化（缺陷 #5）：handleConversationStreamEvent/Sync 的
+  // useCallback 身份随 locale/pipeline 回调变化，若入 effect 依赖会在 pending 期间
+  // 反复退订/重订并重放全量 sync。改用 ref 读取最新实现，effect 只依赖
+  // (api, pending 键集, displayedConversationId)。
+  const handleConversationStreamEventRef = useRef(handleConversationStreamEvent);
+  handleConversationStreamEventRef.current = handleConversationStreamEvent;
+  const handleConversationStreamSyncRef = useRef(handleConversationStreamSync);
+  handleConversationStreamSyncRef.current = handleConversationStreamSync;
+
+  // store settle：对每个 pending 会话订阅其 store，终态到达即结算（缺陷 #3：按
+  // 会话独立，一个 effect 内循环收集 cleanup）。
+  useEffect(() => {
+    if (manualCompactPendingByConversation.size === 0) return;
+    const cleanups: Array<() => void> = [];
+    for (const pending of manualCompactPendingByConversation.values()) {
+      const store = transcriptStoreRegistry.get(pending.conversationId);
+      const settleFromStore = () => {
+        const result = store.getSnapshot().manualCompactionResult;
+        if (result?.operationId === pending.operationId) {
+          settleManualCompactionResult(pending.conversationId, result);
+        }
+      };
+      settleFromStore();
+      cleanups.push(store.subscribe(settleFromStore));
+    }
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
+  }, [manualCompactPendingByConversation, settleManualCompactionResult, transcriptStoreRegistry]);
+
+  // 5 分钟超时：每个 pending 各自计时（缺陷 #4：超时也无论是否显示都提示）。
+  useEffect(() => {
+    if (manualCompactPendingByConversation.size === 0) return;
+    const timeoutIds: number[] = [];
+    for (const pending of manualCompactPendingByConversation.values()) {
+      const remaining = Math.max(0, pending.startedAt + MANUAL_COMPACTION_TIMEOUT_MS - Date.now());
+      const timeoutId = window.setTimeout(() => {
+        if (clearManualCompactPendingRequest(pending.conversationId, pending.operationId)) {
+          setChatError(translate("chat.manualCompactTimedOut", settings.locale));
+        }
+      }, remaining);
+      timeoutIds.push(timeoutId);
+    }
+    return () => {
+      for (const id of timeoutIds) window.clearTimeout(id);
+    };
+  }, [clearManualCompactPendingRequest, manualCompactPendingByConversation, settings.locale]);
+
+  // 后台会话订阅：显示会话已由 useConversationChat 订阅，这里补齐其余 pending 会话
+  // 的流，使其 store 收到 manual_compaction_result 终态（缺陷 #3 多会话、缺陷 #5 稳定）。
+  useEffect(() => {
+    if (!api || manualCompactPendingByConversation.size === 0) return;
+    const cleanups: Array<() => void> = [];
+    for (const pending of manualCompactPendingByConversation.values()) {
+      if (pending.conversationId === displayedConversationId) continue;
+      const store = transcriptStoreRegistry.get(pending.conversationId);
+      const cleanup = api.subscribeConversationStream(pending.conversationId, {
+        onSync: (result) => {
+          store.applySync(result);
+          handleConversationStreamSyncRef.current(pending.conversationId, result);
+        },
+        onEvent: (event) => {
+          store.applyEvent(event);
+          handleConversationStreamEventRef.current(pending.conversationId, event);
+        },
+      });
+      cleanups.push(cleanup);
+    }
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
+  }, [api, displayedConversationId, manualCompactPendingByConversation, transcriptStoreRegistry]);
 
   // Open in flight (history-window fetch, before the replace apply paints).
   const historyDetailLoading = conversationOpenState.phase === "opening";
@@ -2759,362 +3005,83 @@ export default function GatewayApp() {
     setPendingUploadsForConversation(nextConversationId, []);
   }
 
-  const removeWorkspaceProjectFromSettings = useCallback(
-    (project: WorkspaceProject) => {
-      if (project.id === DEFAULT_WORKSPACE_PROJECT_ID) return;
-      const path = project.path.trim();
-      const pathKey = workspaceProjectPathKey(path);
-      // Removing the last non-archived workspace would leave nothing usable;
-      // the default project is unarchived alongside in that case. The merged
-      // list (settings + history workdirs) is the authority on what remains.
-      const hasOtherActiveProjects = workspaceProjects.some(
-        (item) =>
-          item.id !== project.id &&
-          workspaceProjectPathKey(item.path) !== pathKey &&
-          !archivedWorkspaceProjectPathKeys.has(workspaceProjectPathKey(item.path)),
-      );
-      setActiveWorkspaceProjectId((current) => {
-        const currentProject = workspaceProjects.find((item) => item.id === current);
-        if (
-          current === project.id ||
-          (pathKey && currentProject && workspaceProjectPathKey(currentProject.path) === pathKey)
-        ) {
-          return DEFAULT_WORKSPACE_PROJECT_ID;
-        }
-        return current;
-      });
-      setSettings((prev) => {
-        const nextHidden =
-          pathKey &&
-          prev.system.hiddenWorkspaceProjectPaths.some(
-            (item) => workspaceProjectPathKey(item) === pathKey,
-          )
-            ? prev.system.hiddenWorkspaceProjectPaths
-            : path
-              ? [...prev.system.hiddenWorkspaceProjectPaths, path]
-              : prev.system.hiddenWorkspaceProjectPaths;
-        const nextSettings = {
-          ...prev,
-          system: resolveWorkspaceProjects(
-            {
-              ...prev.system,
-              workspaceProjects: prev.system.workspaceProjects.filter(
-                (item) => item.id !== project.id && workspaceProjectPathKey(item.path) !== pathKey,
-              ),
-              hiddenWorkspaceProjectPaths: nextHidden,
-              missingWorkspaceProjectPaths: prev.system.missingWorkspaceProjectPaths.filter(
-                (item) => workspaceProjectPathKey(item) !== pathKey,
-              ),
-              archivedWorkspaceProjectPaths: prev.system.archivedWorkspaceProjectPaths.filter(
-                (item) => {
-                  const itemKey = workspaceProjectPathKey(item);
-                  if (itemKey === pathKey) return false;
-                  return (
-                    hasOtherActiveProjects ||
-                    itemKey !== workspaceProjectPathKey(getDefaultWorkspaceProjectPath(prev.system))
-                  );
-                },
-              ),
-            },
-            getDefaultWorkspaceProjectPath(prev.system),
-          ),
-        };
-        return removeRightDockProjectState(
-          resetWorkspaceResourceSettings(nextSettings, pathKey),
-          pathKey,
-        );
-      });
-      setProjectRenamingId((current) => (current === project.id ? null : current));
-      setProjectRenameDraft("");
-    },
-    [archivedWorkspaceProjectPathKeys, setSettings, workspaceProjects],
-  );
+  const {
+    removeWorkspaceProjectFromSettings,
+    handleArchiveWorkspaceProject,
+    handleUnarchiveWorkspaceProject,
+    handleWorktreeRemoved,
+  } = useWorkspaceProjectSettingsActions({
+    setSettings,
+    workspaceProjects,
+    archivedWorkspaceProjectPathKeys,
+    activeWorkspaceProject,
+    activateWorkspaceProject,
+    setActiveWorkspaceProjectId,
+    setProjectRenamingId,
+    setProjectRenameDraft,
+  });
 
-  const handleRemoveWorkspaceProject = useCallback(
-    (project: WorkspaceProject) => {
-      if (project.id === DEFAULT_WORKSPACE_PROJECT_ID) return;
-
-      void (async () => {
-        const currentApi = api;
-        if (!currentApi) {
-          setSidebarActionError("Gateway 未连接，暂时不能删除项目会话。");
-          return;
-        }
-
-        const path = project.path.trim();
-        const pathKey = workspaceProjectPathKey(path);
-        const runningMessage = "项目中仍有后台任务运行，暂时不能删除该项目。";
-        const projectHasRunningConversation = () => {
-          if (!pathKey) return false;
-          for (const [conversationId, activity] of activityStore.getSnapshot().activities) {
-            const runtimeWorkdir =
-              activity.workdir?.trim() ||
-              conversationWorkdirsRef.current.get(conversationId)?.trim() ||
-              "";
-            const persistedWorkdir = sidebarStore.peek(conversationId)?.cwd?.trim() || "";
-            if (workspaceProjectPathKey(runtimeWorkdir || persistedWorkdir) === pathKey) {
-              return true;
-            }
-          }
-          return false;
-        };
-
-        if (projectHasRunningConversation()) {
-          setSidebarActionError(runningMessage);
-          return;
-        }
-
-        setSidebarActionError(null);
-        try {
-          const conversationIds: string[] = [];
-          const seenConversationIds = new Set<string>();
-          if (path) {
-            for (let pageNumber = 1; ; pageNumber += 1) {
-              const page = await currentApi.listHistory(
-                pageNumber,
-                PROJECT_HISTORY_DELETE_PAGE_SIZE,
-                { cwd: path },
-              );
-              for (const item of page.conversations) {
-                const id = item.id.trim();
-                if (!id || seenConversationIds.has(id)) continue;
-                seenConversationIds.add(id);
-                conversationIds.push(id);
-              }
-
-              if (
-                page.conversations.length === 0 ||
-                conversationIds.length >= page.total_count ||
-                page.conversations.length < PROJECT_HISTORY_DELETE_PAGE_SIZE
-              ) {
-                break;
-              }
-            }
-          }
-
-          const runningConversationIdsInProject = conversationIds.filter((id) =>
-            isConversationBusy(id),
-          );
-          if (runningConversationIdsInProject.length > 0 || projectHasRunningConversation()) {
-            setSidebarActionError(runningMessage);
-            return;
-          }
-
-          let terminalSessionsToClose: TerminalSession[] = [];
-          const pruneProjectTerminalSessions = () => {
-            terminalSessionsVersionRef.current += 1;
-            setTerminalSessions((current) =>
-              current.filter((session) => !terminalSessionBelongsToProject(session, pathKey)),
-            );
-          };
-          if (
-            terminalClient &&
-            (settings.remote.enableWebTerminal || settings.remote.enableWebSshTerminal) &&
-            pathKey
-          ) {
-            terminalSessionsToClose = await terminalClient.list(pathKey);
-            const runningTerminalCount = terminalSessionsToClose.filter(
-              (session) => session.running,
-            ).length;
-            if (runningTerminalCount > 0) {
-              const confirmed = await requestConfirmDialog({
-                title: translate("chat.workspaceRemoveConfirm", settings.locale).replace(
-                  "{name}",
-                  project.name,
-                ),
-                subtitle: translate("chat.workspaceRemoveDescription", settings.locale),
-                description: (
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                      <Terminal className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">
-                          {translate("chat.exitConfirmRunningLabel", settings.locale)}
-                        </span>
-                        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500/15 px-1.5 text-[calc(11px*var(--zone-font-scale,1))] font-semibold text-amber-700 dark:text-amber-300">
-                          {runningTerminalCount}
-                        </span>
-                      </div>
-                      <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                        {translate("chat.workspaceRemoveTerminalDescription", settings.locale)}
-                      </p>
-                    </div>
-                  </div>
-                ),
-                confirmLabel: translate("chat.workspaceRemoveConfirmContinue", settings.locale),
-                cancelLabel: translate("chat.cancel", settings.locale),
-                closeLabel: translate("chat.workspaceRemoveConfirmClose", settings.locale),
-                tone: "warning",
-              });
-              if (!confirmed) {
-                return;
-              }
-            }
-          }
-
-          const visibleConversationId = resolveVisibleConversationId(
-            selectedHistoryIdRef.current,
-            conversationIdRef.current,
-          );
-          const visibleRuntimeWorkdir =
-            conversationWorkdirsRef.current.get(visibleConversationId)?.trim() || "";
-          const visiblePersistedWorkdir =
-            sidebarStore.peek(visibleConversationId)?.cwd?.trim() || "";
-          const visibleWorkdir =
-            visiblePersistedWorkdir ||
-            visibleRuntimeWorkdir ||
-            (isAgentMode ? activeWorkspaceProjectPath || settings.system.workdir.trim() : "");
-
-          for (const conversationId of conversationIds) {
-            await currentApi.deleteHistory(conversationId);
-          }
-
-          const deletedConversationIds = new Set(conversationIds);
-          if (deletedConversationIds.size > 0) {
-            const nextSharedItems = sharedHistoryItemsRef.current.filter(
-              (item) => !deletedConversationIds.has(item.id),
-            );
-            sharedHistoryItemsRef.current = nextSharedItems;
-            setSharedHistoryItems(nextSharedItems);
-
-            for (const conversationId of deletedConversationIds) {
-              // Immediate local echo; the gateway delete events confirm.
-              sidebarStore.removeLocal(conversationId);
-              transcriptStoreRegistry.remove(conversationId);
-              historyWindowStatesRef.current.delete(conversationId);
-              conversationWorkdirsRef.current.delete(conversationId);
-              clearCachedComposerDraft(conversationId);
-              setPendingUploadsForConversation(conversationId, []);
-            }
-          }
-          if (terminalSessionsToClose.length > 0 && terminalClient) {
-            await terminalClient.closeProject(pathKey);
-            pruneProjectTerminalSessions();
-          }
-          if (pathKey && workspaceProjectPathKey(activeWorkspaceProjectPath) === pathKey) {
-            setRightDockOpen(false);
-            if (terminalSessionsToClose.length === 0) {
-              pruneProjectTerminalSessions();
-            }
-          }
-
-          const shouldResetVisibleConversation =
-            Boolean(visibleConversationId && deletedConversationIds.has(visibleConversationId)) ||
-            Boolean(pathKey && workspaceProjectPathKey(visibleWorkdir) === pathKey);
-
-          if (path) {
-            await memoryDeleteProject({
-              workdir: path,
-              actor: "tool",
-              reason: "workspace project removed",
-            });
-          }
-          removeWorkspaceProjectFromSettings(project);
-          // The conversation-removal watcher may already have migrated the
-          // selection; only reset when the same conversation is still shown.
-          if (
-            shouldResetVisibleConversation &&
-            getDisplayedConversationId() === visibleConversationId.trim()
-          ) {
-            startNewConversation({
-              workdir: getDefaultWorkspaceProjectPath(settings.system) || undefined,
-            });
-          }
-          void sidebarStore.refreshWorkdirs("delete");
-        } catch (error) {
-          setSidebarActionError(asErrorMessage(error, "删除项目失败"));
-        }
-      })();
-    },
-    [
-      activeWorkspaceProjectPath,
-      activityStore,
-      api,
-      clearCachedComposerDraft,
-      isAgentMode,
-      isConversationBusy,
-      removeWorkspaceProjectFromSettings,
-      requestConfirmDialog,
-      settings.remote.enableWebSshTerminal,
-      settings.remote.enableWebTerminal,
-      settings.locale,
-      settings.system,
-      setPendingUploadsForConversation,
-      sidebarStore,
-      startNewConversation,
-      terminalClient,
-    ],
-  );
-
-  const handleArchiveWorkspaceProject = useCallback(
-    (project: WorkspaceProject) => {
-      const pathKey = workspaceProjectPathKey(project.path);
-      if (!pathKey || archivedWorkspaceProjectPathKeys.has(pathKey)) return;
-      const fallbackProject = workspaceProjects.find(
-        (item) =>
-          item.id !== project.id &&
-          workspaceProjectPathKey(item.path) !== pathKey &&
-          !archivedWorkspaceProjectPathKeys.has(workspaceProjectPathKey(item.path)),
-      );
-      // Archiving is only offered while another active workspace remains.
-      if (!fallbackProject) return;
-      if (
-        activeWorkspaceProject &&
-        (activeWorkspaceProject.id === project.id ||
-          workspaceProjectPathKey(activeWorkspaceProject.path) === pathKey)
-      ) {
-        activateWorkspaceProject(fallbackProject);
+  const isWorkspaceProjectRunning = useCallback(
+    (pathKey: string) => {
+      if (sidebarStore.getSnapshot().runningWorkdirPathKeys.has(pathKey)) {
+        return true;
       }
-      setSettings((prev) =>
-        prev.system.archivedWorkspaceProjectPaths.some(
-          (path) => workspaceProjectPathKey(path) === pathKey,
-        )
-          ? prev
-          : {
-              ...prev,
-              system: {
-                ...prev.system,
-                archivedWorkspaceProjectPaths: [
-                  ...prev.system.archivedWorkspaceProjectPaths,
-                  project.path.trim(),
-                ],
-              },
-            },
-      );
-    },
-    [
-      activateWorkspaceProject,
-      activeWorkspaceProject,
-      archivedWorkspaceProjectPathKeys,
-      setSettings,
-      workspaceProjects,
-    ],
-  );
-
-  const handleUnarchiveWorkspaceProject = useCallback(
-    (project: WorkspaceProject) => {
-      const pathKey = workspaceProjectPathKey(project.path);
-      if (!pathKey) return;
-      setSettings((prev) => {
-        const next = prev.system.archivedWorkspaceProjectPaths.filter(
-          (path) => workspaceProjectPathKey(path) !== pathKey,
-        );
-        if (next.length === prev.system.archivedWorkspaceProjectPaths.length) {
-          return prev;
+      for (const [conversationId, activity] of activityStore.getSnapshot().activities) {
+        const runtimeWorkdir =
+          activity.workdir?.trim() ||
+          conversationWorkdirsRef.current.get(conversationId)?.trim() ||
+          "";
+        const persistedWorkdir = sidebarStore.peek(conversationId)?.cwd?.trim() || "";
+        if (workspaceProjectPathKey(runtimeWorkdir || persistedWorkdir) === pathKey) {
+          return true;
         }
-        return {
-          ...prev,
-          system: {
-            ...prev.system,
-            archivedWorkspaceProjectPaths: next,
-          },
-        };
-      });
+      }
+      return false;
     },
-    [setSettings],
+    [activityStore, sidebarStore],
   );
+  const pruneWorkspaceProjectTerminalSessions = useCallback((pathKey: string) => {
+    terminalSessionsVersionRef.current += 1;
+    setTerminalSessions((current) =>
+      current.filter((session) => !terminalSessionBelongsToProject(session, pathKey)),
+    );
+  }, []);
+  const closeWorkspaceProjectRightDock = useCallback(
+    (pathKey: string) => {
+      if (workspaceProjectPathKey(activeWorkspaceProjectPath) === pathKey) {
+        setRightDockOpen(false);
+      }
+    },
+    [activeWorkspaceProjectPath],
+  );
+  const getDisplayedConversationWorkdir = useCallback(
+    () => displayedConversationWorkdirRef.current,
+    [],
+  );
+  const refreshWorkspaceProjectWorkdirs = useCallback(() => {
+    void sidebarStore.refreshWorkdirs("delete");
+  }, [sidebarStore]);
+  const translateWorkspaceProject = useCallback(
+    (key: string) => translate(key, settings.locale),
+    [settings.locale],
+  );
+  const handleRemoveWorkspaceProject = useWorkspaceProjectDeletion({
+    settings,
+    t: translateWorkspaceProject,
+    requestConfirmDialog,
+    setErrorMessage: setSidebarActionError,
+    removeWorkspaceProjectFromSettings,
+    gitClient,
+    terminalClient,
+    shouldInspectTerminalSessions:
+      settings.remote.enableWebTerminal || settings.remote.enableWebSshTerminal,
+    isWorkspaceProjectRunning,
+    onPruneTerminalSessions: pruneWorkspaceProjectTerminalSessions,
+    onCloseRightDockProject: closeWorkspaceProjectRightDock,
+    getDisplayedConversationWorkdir,
+    startNewConversation,
+    onWorktreeRemoved: refreshWorkspaceProjectWorkdirs,
+  });
 
   function handleSidebarNewConversation() {
     if (isMobileSidebarLayout()) {
@@ -3689,20 +3656,15 @@ export default function GatewayApp() {
     }
     setSettingsSection(section);
     setSettingsProviderId(section === "providers" ? providerId : undefined);
-    setSettingsOpen(true);
-    setOverlay("entering");
-    requestAnimationFrame(() => requestAnimationFrame(() => setOverlay("open")));
+    openSettingsOverlay();
   }
 
   function closeSettings() {
-    setOverlay("leaving");
+    closeSettingsOverlay();
   }
 
   function handleSettingsTransitionEnd() {
-    if (overlay === "leaving") {
-      setSettingsOpen(false);
-      setOverlay("closed");
-    }
+    handleSettingsOverlayTransitionEnd();
   }
 
   const handleLogout = useCallback(() => {
@@ -3730,8 +3692,7 @@ export default function GatewayApp() {
     protectedConversationRef.current = "";
     submitInFlightRef.current = false;
     setUserMenuOpen(false);
-    setSettingsOpen(false);
-    setOverlay("closed");
+    resetSettingsOverlay();
     setStatus(null);
     setStatusError(null);
     setConversationId("");
@@ -3826,8 +3787,7 @@ export default function GatewayApp() {
       setSharedManagerUpdatingIds(new Set());
       setSharedManagerErrors({});
       setProjectPickerOpen(false);
-      setSettingsOpen(false);
-      setOverlay("closed");
+      resetSettingsOverlay();
       setActiveView("chat");
       setRightDockOpen(false);
       setNotifyItems([]);
@@ -3844,13 +3804,7 @@ export default function GatewayApp() {
     ],
   );
 
-  const localeContextValue = useMemo(
-    () => ({
-      locale: settings.locale,
-      t: (key: string) => translate(key, settings.locale),
-    }),
-    [settings.locale],
-  );
+  const localeContextValue = useLocaleContextValue(settings.locale);
 
   const activeProviders = useMemo<ModelProviderSource[]>(
     // WebUI provider config should follow the synced settings payload directly.
@@ -3983,21 +3937,10 @@ export default function GatewayApp() {
     selectedSkillNames: settings.skills.selected,
     setSettings,
   });
-  const enabledComposerSkills = useMemo(() => {
-    if (!skillsEnabled || selectedSkillNames.length === 0 || availableSkills.length === 0) {
-      return [];
-    }
-    const byName = new Map(availableSkills.map((skill) => [skill.name, skill]));
-    return selectedSkillNames
-      .map((name) => byName.get(name))
-      .filter((skill): skill is (typeof availableSkills)[number] => Boolean(skill));
-  }, [availableSkills, selectedSkillNames, skillsEnabled]);
-  const codeReviewSkill = useMemo(
-    () =>
-      availableSkills.find(
-        (skill) => skill.name === "liveagent-code-review" && skill.builtIn === true,
-      ),
-    [availableSkills],
+  const { enabledComposerSkills, codeReviewSkill } = useComposerSkillSelection(
+    availableSkills,
+    selectedSkillNames,
+    skillsEnabled,
   );
 
   const canShareHistory = Boolean(
@@ -4085,24 +4028,17 @@ export default function GatewayApp() {
   const terminalProjectPathKey = terminalProjectPath
     ? workspaceProjectPathKey(terminalProjectPath)
     : "";
-  // getRightDockProjectState / getRightDockFileTreeState / getSshProjectHostIds
-  // build fresh objects on every call, so memoize on the owning settings slice
-  // + path key: RightDockPanel is memo'd and these references are props.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on settings.customSettings.rightDock (the only slice these getters read) so unrelated settings changes keep the reference stable.
-  const rightDockProjectState = useMemo(
-    () => getRightDockProjectState(settings.customSettings, terminalProjectPathKey),
-    [settings.customSettings.rightDock, terminalProjectPathKey],
-  );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on settings.customSettings.rightDock (the only slice these getters read) so unrelated settings changes keep the reference stable.
-  const rightDockFileTreeState = useMemo(
-    () => getRightDockFileTreeState(settings.customSettings, terminalProjectPathKey),
-    [settings.customSettings.rightDock, terminalProjectPathKey],
-  );
-  const rightDockFileTreeOpen = isRightDockSingletonTabOpen(
-    settings.customSettings,
-    terminalProjectPathKey,
-    "fileTree",
-  );
+  const {
+    rightDockProjectState,
+    rightDockFileTreeState,
+    rightDockFileTreeOpen,
+    associatedSshHostIds,
+    handleChatTranscriptWidthChange,
+    handleRightDockWidthChange,
+    handleRightDockProjectStateChange,
+    handleRightDockFileTreeStateChange,
+    handleSshProjectHostIdsChange,
+  } = useRightDockSettings({ settings, setSettings, terminalProjectPathKey });
   const rightDockTunnelOpen = isRightDockSingletonTabOpen(
     settings.customSettings,
     terminalProjectPathKey,
@@ -4112,10 +4048,6 @@ export default function GatewayApp() {
     settings.customSettings,
     terminalProjectPathKey,
     "sshTunnel",
-  );
-  const associatedSshHostIds = useMemo(
-    () => getSshProjectHostIds(settings.ssh, terminalProjectPathKey),
-    [settings.ssh, terminalProjectPathKey],
   );
   const projectToolsDisabledMessage = !settingsSyncReady
     ? "Syncing desktop settings..."
@@ -4189,214 +4121,48 @@ export default function GatewayApp() {
     () => (api ? createGatewayWorkspaceActivityClient(api) : null),
     [api],
   );
-  // ── 回复末尾「已编辑文件」卡的三个动作 ────────────────────────────────
-  const gitReviewFocusNonceRef = useRef(0);
-  const [gitReviewFocusRequest, setGitReviewFocusRequest] = useState<GitReviewFocusRequest | null>(
-    null,
+  const {
+    gitReviewFocusRequest,
+    handleGitReviewFocusRequestHandled,
+    handleChangedFileReveal,
+    changedFilesActions,
+  } = useChangedFilesActions({
+    terminalProjectPathKey,
+    setRightDockOpen,
+    setSettings,
+    onOpenFile: handleOpenWorkspaceFile,
+  });
+  const notifyChatFileLinkError = useCallback(
+    (message: string) => addNotify("error", message),
+    [addNotify],
   );
-  const handleGitReviewFocusRequestHandled = useCallback((nonce: number) => {
-    setGitReviewFocusRequest((current) => (current && current.nonce === nonce ? null : current));
-  }, []);
-  const handleChangedFileOpenDiff = useCallback(
-    (path: string | null) => {
-      if (!terminalProjectPathKey) return;
-      setRightDockOpen(true);
-      setSettings((prev) => openRightDockSingletonTab(prev, terminalProjectPathKey, "gitReview"));
-      gitReviewFocusNonceRef.current += 1;
-      setGitReviewFocusRequest({
-        path: (path ?? "").trim(),
-        nonce: gitReviewFocusNonceRef.current,
-      });
-    },
-    [setSettings, terminalProjectPathKey],
+  const readChatFileLinkError = useCallback(
+    (error: unknown) => asErrorMessage(error, "The linked file could not be opened."),
+    [],
   );
-  const handleChangedFileReveal = useCallback(
-    (path: string) => {
-      if (!terminalProjectPathKey) return;
-      const selectedPath = path
-        .trim()
-        .replace(/\\/g, "/")
-        .replace(/^\/+|\/+$/g, "");
-      if (!selectedPath) return;
-      setRightDockOpen(true);
-      setSettings((prev) => {
-        const opened = openRightDockSingletonTab(prev, terminalProjectPathKey, "fileTree");
-        const current = getRightDockFileTreeState(opened.customSettings, terminalProjectPathKey);
-        return updateRightDockFileTreeState(opened, terminalProjectPathKey, {
-          query: "",
-          selectedPath,
-          expandedPaths: Array.from(
-            new Set([...current.expandedPaths, ...expandedPathsForFileTreePath(selectedPath)]),
-          ),
-          bumpRevision: true,
-        });
-      });
-    },
-    [setSettings, terminalProjectPathKey],
-  );
-  const changedFilesActions = useMemo<ChangedFilesActions>(
-    () => ({
-      onOpenFile: handleOpenWorkspaceFile,
-      onRevealInFileTree: handleChangedFileReveal,
-      onOpenDiff: handleChangedFileOpenDiff,
-    }),
-    [handleChangedFileOpenDiff, handleChangedFileReveal, handleOpenWorkspaceFile],
-  );
-  const handleOpenChatFileLink = useCallback(
-    (link: ChatFileLink) => {
-      const conversationWorkdir = displayedConversationWorkdir.trim();
-      if (!displayedConversationId || !conversationWorkdir) {
-        addNotify("error", "The conversation working directory is unavailable.");
-        return;
-      }
-      const request = {
-        ...link,
-        conversationId: displayedConversationId,
-        workdir: conversationWorkdir,
-      };
-      void openChatFileLink(request)
-        .then(async (result) => {
-          if (result.action === "opened" || result.action === "revealed") return;
-          const resultWorkdir = result.workdir?.trim() ?? "";
-          const resultPath = result.path?.trim() ?? "";
-          if (!resultWorkdir || !resultPath) {
-            addNotify("error", "The linked file could not be opened.");
-            return;
-          }
-          if (result.action === "directory") {
-            if (workspaceProjectPathKey(resultWorkdir) === terminalProjectPathKey) {
-              handleChangedFileReveal(resultPath);
-              return;
-            }
-            const fallback = await openChatFileLink({ ...request, openInFileManager: true });
-            if (fallback.action !== "opened") {
-              addNotify("error", "The linked directory could not be opened.");
-            }
-            return;
-          }
-          const workspaceRequest = {
-            projectPathKey: workspaceProjectPathKey(resultWorkdir),
-            workdir: resultWorkdir,
-            path: resultPath,
-          };
-          if (
-            !result.outsideWorkspace &&
-            workspaceRequest.projectPathKey === terminalProjectPathKey
-          ) {
-            handleChangedFileReveal(resultPath);
-          }
-          if (result.action === "preview") {
-            openWorkspaceFilePreview(workspaceRequest);
-            return;
-          }
-          openWorkspaceEditorFile({
-            ...workspaceRequest,
-            line: result.line,
-            endLine: result.endLine,
-            column: result.column,
-          });
-        })
-        .catch((error: unknown) => {
-          const message = asErrorMessage(error, "The linked file could not be opened.");
-          const normalized = message.toLowerCase();
-          addNotify(
-            "error",
-            normalized.includes("timed out") ||
-              normalized.includes("offline") ||
-              normalized.includes("not connected")
-              ? "The device that owns this conversation is offline or did not respond."
-              : message,
-          );
-        });
-    },
-    [
-      addNotify,
-      displayedConversationId,
-      displayedConversationWorkdir,
-      handleChangedFileReveal,
-      openWorkspaceEditorFile,
-      openWorkspaceFilePreview,
-      terminalProjectPathKey,
-    ],
-  );
-  // RightDockPanel is memo'd: every callback handed to it must be stable or
-  // the memo boundary is void (see the panel-side context useMemo).
-  const handleChatTranscriptWidthChange = useCallback(
-    (nextWidth: number) => {
-      setSettings((prev) => updateChatTranscriptWidth(prev, nextWidth));
-    },
-    [setSettings],
-  );
-  const handleRightDockWidthChange = useCallback(
-    (nextWidth: number) => {
-      setSettings((prev) => updateRightDockWidth(prev, nextWidth));
-    },
-    [setSettings],
-  );
-  const handleRightDockProjectStateChange = useCallback(
-    (updater: (current: RightDockProjectState) => RightDockProjectState) => {
-      setSettings((prev) => updateRightDockProjectState(prev, terminalProjectPathKey, updater));
-    },
-    [setSettings, terminalProjectPathKey],
-  );
-  const handleRightDockFileTreeStateChange = useCallback(
-    (patch: RightDockFileTreeStatePatch) => {
-      setSettings((prev) => updateRightDockFileTreeState(prev, terminalProjectPathKey, patch));
-    },
-    [setSettings, terminalProjectPathKey],
-  );
-  const handleSshProjectHostIdsChange = useCallback(
-    (hostIds: string[]) => {
-      setSettings((prev) => updateSshProjectHostIds(prev, terminalProjectPathKey, hostIds));
-    },
-    [setSettings, terminalProjectPathKey],
-  );
-  const handleRightDockInsertFileMention = useCallback((path: string, kind: "file" | "dir") => {
-    composerRef.current?.insertFileMention(path, kind);
-    composerRef.current?.focus();
-  }, []);
-  const handleRightDockInsertCodeReviewSkill = useCallback(() => {
-    const composer = composerRef.current;
-    if (!composer || !codeReviewSkill) return;
-    setSettings((prev) => {
-      const selected = mergeAlwaysEnabledSkillNames(prev.skills.selected);
-      if (selected.includes(codeReviewSkill.name)) return prev;
-      return updateSkills(prev, { selected: [...selected, codeReviewSkill.name] });
-    });
-    const alreadyInserted = composer
-      .getDraft()
-      .skillMentions.some((skill) => skill.name === codeReviewSkill.name);
-    if (!alreadyInserted) {
-      composer.insertSkillMention(codeReviewSkill);
-    }
-    composer.focus();
-  }, [codeReviewSkill, setSettings]);
-  const handleRightDockInsertCommitMention = useCallback((commit: GitCommitContextPayload) => {
-    composerRef.current?.insertCommitMention(commit);
-    composerRef.current?.focus();
-  }, []);
-  const handleRightDockInsertGitFileMention = useCallback((file: GitFileContextPayload) => {
-    composerRef.current?.insertGitFileMention(file);
-    composerRef.current?.focus();
-  }, []);
-  const handleInsertCodeMention = useCallback((reference: CodeMentionReference) => {
-    composerRef.current?.insertCodeMention(reference);
-    composerRef.current?.focus();
-  }, []);
-  // Guards re-entry while a suggestion is still typing in: the cards stay
-  // disabled and further clicks are ignored until the composer settles.
-  const [isSuggestionTyping, setIsSuggestionTyping] = useState(false);
-  const suggestionTypingRef = useRef(false);
-  const handleEmptyStateSuggestion = useCallback((text: string) => {
-    const composer = composerRef.current;
-    if (!composer || suggestionTypingRef.current) return;
-    suggestionTypingRef.current = true;
-    setIsSuggestionTyping(true);
-    void composer.typeText(text).finally(() => {
-      suggestionTypingRef.current = false;
-      setIsSuggestionTyping(false);
-    });
-  }, []);
+  const handleOpenChatFileLink = useChatFileLinkNavigation({
+    conversationId: displayedConversationId,
+    conversationWorkdir: displayedConversationWorkdir,
+    terminalProjectPathKey,
+    notifyError: notifyChatFileLinkError,
+    onRevealInFileTree: handleChangedFileReveal,
+    openWorkspaceEditorFile,
+    openWorkspaceFilePreview,
+    getErrorMessage: readChatFileLinkError,
+  });
+  const {
+    isSuggestionTyping,
+    handleRightDockInsertFileMention,
+    handleRightDockInsertCommitMention,
+    handleRightDockInsertGitFileMention,
+    handleInsertCodeMention,
+    handleEmptyStateSuggestion,
+  } = useComposerActions(composerRef);
+  const handleRightDockInsertCodeReviewSkill = useInsertCodeReviewSkill({
+    composerRef,
+    codeReviewSkill,
+    setSettings,
+  });
   const handleRightDockClose = useCallback(() => {
     setRightDockOpen(false);
   }, []);
@@ -4469,10 +4235,39 @@ export default function GatewayApp() {
     return item?.title ?? "";
   }, [selectedHistoryId, sidebarConversationsById]);
   const transcriptRows = displayedTranscript.rows;
-  const taskProgressUpdates = useMemo(
-    () => selectTodoProgressUpdates(transcriptRows),
+  const taskProgressSnapshot = useMemo(
+    () => selectLatestTaskProgress(transcriptRows),
     [transcriptRows],
   );
+  // 用量环读数（缺陷 #6）：最近 assistant 轮次的真实 usage；压缩后回退检查点估算。
+  // 不再以逐帧变化的标量 prop 传入 memo 化的 ChatComposerBar（那会让整枚 composer
+  // 流式期间每帧重渲染、打字卡顿），而是构造订阅隔离的 source：订阅显示会话的
+  // transcript store，getContextUsageTokens 惰性 derive 并按 store revision 缓存，
+  // revision 未变直接复用——只有环自身经 useSyncExternalStore 重渲染。
+  // 本 memo 是 contextUsageTokens 的唯一消费者迁移点：迁移后 GatewayApp 不再持有
+  // 标量读数（无 mobile header 等其他消费者）。
+  const contextUsageTokensSource = useMemo<ContextUsageTokensSource>(() => {
+    const store = displayedConversationId
+      ? transcriptStoreRegistry.get(displayedConversationId)
+      : null;
+    if (!store) {
+      return { subscribe: () => () => {}, getContextUsageTokens: () => undefined };
+    }
+    let cache: { revision: number; value: number | undefined } | null = null;
+    return {
+      // store 的 subscribe/getSnapshot 是闭包属性，可安全解绑传递。
+      subscribe: store.subscribe,
+      getContextUsageTokens: () => {
+        const snapshot = store.getSnapshot();
+        if (cache && cache.revision === snapshot.revision) {
+          return cache.value;
+        }
+        const value = deriveContextUsageTokens(snapshot.rows);
+        cache = { revision: snapshot.revision, value };
+        return value;
+      },
+    };
+  }, [displayedConversationId, transcriptStoreRegistry]);
   // 当前会话的待审批工具:遍历渲染中的 transcript,筛出带 __toolApprovalPending 标记
   // 且尚无结果的 tool call(与 ToolCallItem 判定同源)。用于输入框上方的集中审批栏,
   // 取代埋在各折叠项里的分散卡片。快照 revision 变化时经 useConversationChat 重渲染,
@@ -4553,6 +4348,50 @@ export default function GatewayApp() {
   const composerIsSending = transcriptBusy;
   const transcriptError = displayedTranscriptRowCount === 0 ? null : chatError;
   const composerCompactionBlocked = transcriptToolStatusIsCompaction;
+  // 手动压缩：受理回包只表示桌面开始处理；按钮保持 pending，直到同一
+  // operationId 的 manual_compaction_result 终态到达。探针拒绝（低于阈值/无内容/忙）
+  // 时桌面同步回 accepted:false + message，走 !accepted 分支即时清 pending。
+  const handleManualCompact = useCallback(async () => {
+    const conversationIdValue = getDisplayedConversationId();
+    // 缺陷 #3：只在“同会话”已有 pending 时拒绝（静默 return 即可，UI 已 blocked）；
+    // 其他会话的 pending 不再屏蔽本会话的压缩请求。
+    if (!api || !conversationIdValue || manualCompactPendingRef.current.has(conversationIdValue)) {
+      return;
+    }
+    const operationId = createUuid();
+    const pendingRequest: ManualCompactPendingRequest = {
+      conversationId: conversationIdValue,
+      operationId,
+      workdir: displayedConversationWorkdir,
+      startedAt: Date.now(),
+    };
+    setManualCompactPendingRequest(pendingRequest);
+    try {
+      const response = await api.chatQueueCompactNow(conversationIdValue, operationId);
+      if (
+        !response.accepted &&
+        clearManualCompactPendingRequest(conversationIdValue, operationId) &&
+        isDisplayedConversation(conversationIdValue)
+      ) {
+        setChatError(response.message || translate("chat.manualCompactRejected", settings.locale));
+      }
+    } catch (error) {
+      if (
+        clearManualCompactPendingRequest(conversationIdValue, operationId) &&
+        isDisplayedConversation(conversationIdValue)
+      ) {
+        setChatError(
+          asErrorMessage(error, translate("chat.manualCompactRejected", settings.locale)),
+        );
+      }
+    }
+  }, [
+    api,
+    clearManualCompactPendingRequest,
+    displayedConversationWorkdir,
+    setManualCompactPendingRequest,
+    settings.locale,
+  ]);
   const chatProtocolIncompatible = isChatRuntimeProtocolIncompatible(status);
   const chatProtocolIncompatibleMessage = chatProtocolIncompatible
     ? translate("chat.runtime.protocolIncompatible", settings.locale)
@@ -4715,12 +4554,14 @@ export default function GatewayApp() {
           <div className="gateway-editor-host">
             <GatewaySidebarContainer
               store={sidebarStore}
+              transientRunningConversations={manualCompactTransientConversations}
               currentConversationId={displayedConversationId}
               isOpen={sidebarOpen}
               fontScale={settings.customSettings.fontScale.sidebar}
               activeView={activeView}
               showProjects={isAgentMode && status?.online === true}
               projects={workspaceProjects}
+              workspaceProjectGroups={settings.system.workspaceProjectGroups}
               activeProjectId={activeWorkspaceProject?.id}
               missingProjectPathKeys={missingWorkspaceProjectPathKeys}
               projectRenamingId={projectRenamingId}
@@ -4736,6 +4577,11 @@ export default function GatewayApp() {
               onProjectsCollapsedChange={handleSidebarProjectsCollapsedChange}
               onRecentCollapsedChange={handleSidebarRecentCollapsedChange}
               onCreateProject={handleOpenCreateWorkspaceProject}
+              onCreateWorkspaceGroup={handleCreateWorkspaceGroup}
+              onRenameWorkspaceGroup={handleRenameWorkspaceGroup}
+              onDeleteWorkspaceGroup={handleDeleteWorkspaceGroup}
+              onMoveProjectToGroup={handleMoveWorkspaceProjectToGroup}
+              onToggleWorkspaceGroupCollapsed={handleToggleWorkspaceGroupCollapsed}
               onSelectProject={handleSelectWorkspaceProject}
               onNewConversationForProject={handleNewConversationForProject}
               onBrowseProjectInFileTree={handleBrowseWorkspaceProjectInFileTree}
@@ -4782,7 +4628,6 @@ export default function GatewayApp() {
                 updatingIds={sharedManagerUpdatingIds}
                 errors={sharedManagerErrors}
                 listError={sharedHistoryListError}
-                shareOrigin={settings.remote.gatewayUrl}
                 onRefresh={handleRefreshSharedHistoryStatuses}
                 onLoadStatus={handleLoadSharedHistoryStatus}
                 onDisableShare={handleDisableSharedHistory}
@@ -4843,18 +4688,7 @@ export default function GatewayApp() {
                     onDrop: handleFileDrop,
                   },
                   onSelectExecutionMode: (mode) =>
-                    setSettings((prev) => {
-                      const current = prev.system.executionMode;
-                      if (mode === "text") {
-                        return current === "text"
-                          ? prev
-                          : updateSystem(prev, { executionMode: "text" });
-                      }
-                      // 切回 Agent：仅从 Chat 切换；agent-dev 视为 Agent，保持不降级。
-                      return current === "text"
-                        ? updateSystem(prev, { executionMode: "tools" })
-                        : prev;
-                    }),
+                    setSettings((prev) => updateExecutionModeFromChatSelection(prev, mode)),
                   hasModels: modelOptions.length > 0,
                   currentModelLabel,
                   modelOptions,
@@ -4870,32 +4704,13 @@ export default function GatewayApp() {
                   onOpenSidebar: () => setSidebarOpen(true),
                   trailingActions: (
                     <>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setRightDockOpen((open) => !open)}
-                        disabled={Boolean(projectToolsDisabledMessage) && !rightDockOpen}
-                        aria-expanded={rightDockOpen}
-                        title={
-                          rightDockOpen
-                            ? "Collapse project tools panel"
-                            : (projectToolsDisabledMessage ?? "Expand project tools panel")
-                        }
-                        className={`gateway-project-tools-panel-toggle relative h-8 w-8 rounded-lg text-muted-foreground transition-[background-color,color,transform] duration-150 hover:text-foreground active:scale-95 ${
-                          rightDockOpen ? "bg-muted text-foreground" : ""
-                        }`}
-                      >
-                        {rightDockOpen ? (
-                          <PanelRightClose className="h-4 w-4" />
-                        ) : (
-                          <PanelRightOpen className="h-4 w-4" />
-                        )}
-                        {projectTerminalSessions.length > 0 ? (
-                          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[calc(10px*var(--zone-font-scale,1))] font-semibold leading-none text-white">
-                            {projectTerminalSessions.length}
-                          </span>
-                        ) : null}
-                      </Button>
+                      <ProjectToolsPanelToggle
+                        isOpen={rightDockOpen}
+                        sessionCount={projectTerminalSessions.length}
+                        disabledMessage={projectToolsDisabledMessage}
+                        className="gateway-project-tools-panel-toggle"
+                        onToggle={() => setRightDockOpen((open) => !open)}
+                      />
                       <UserMenu
                         open={userMenuOpen}
                         onOpenChange={setUserMenuOpen}
@@ -4979,7 +4794,6 @@ export default function GatewayApp() {
                                 onLoadEarlierHistory={
                                   selectedHistoryHasMore ? handleLoadEarlierHistory : undefined
                                 }
-                                isAgentMode={isAgentMode}
                                 showUsage={isAgentDevExecutionMode}
                                 usageContextWindow={currentModelContextWindow}
                                 workspaceRoot={displayedConversationWorkdir}
@@ -5047,7 +4861,13 @@ export default function GatewayApp() {
                           chatRuntimeControls={chatRuntimeControlsForCurrentProvider}
                           reasoningOptions={chatRuntimeReasoningOptions}
                           thinkingAlwaysOn={chatRuntimeThinkingAlwaysOn}
+                          contextUsageTokensSource={contextUsageTokensSource}
+                          contextWindow={currentModelContextWindow}
+                          onManualCompactConfirm={handleManualCompact}
+                          manualCompactBlocked={manualCompactPending || composerCompactionBlocked}
                           gitClient={gitClient}
+                          onOpenWorktree={handleOpenWorktree}
+                          onWorktreeRemoved={handleWorktreeRemoved}
                           gitWriteEnabled={settings.remote.enableWebGit}
                           gitDisabledMessage={gitDisabledMessage}
                           workspaceActivityClient={workspaceActivityClient}
@@ -5173,11 +4993,10 @@ export default function GatewayApp() {
                           onEditQueuedTurn={editQueuedTurn}
                           onRemoveQueuedTurn={removeQueuedTurn}
                           taskProgressBar={
-                            <CurrentTaskProgress
+                            <TaskProgressBar
                               key={displayedConversationId}
-                              updates={taskProgressUpdates}
+                              snapshot={taskProgressSnapshot}
                               isConversationRunning={transcriptBusy}
-                              locale={settings.locale}
                             />
                           }
                           approvalBar={approvalBar}
