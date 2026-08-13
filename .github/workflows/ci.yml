@@ -270,6 +270,12 @@ jobs:
       - name: Dispatch coverage vs manifest
         run: python3 scripts/verify_headless.py
 
+      # Fork-only: upstream merges repeatedly clobber headless WebUI glue
+      # (multipart upload, folder picker intercept, bridge/shims). Keep this
+      # step on the fork — do not open an upstream PR for it.
+      - name: Headless WebUI glue markers
+        run: python3 scripts/verify_headless_glue.py
+
   ui-boundaries:
     name: Shared UI Boundaries
     runs-on: ubuntu-latest
