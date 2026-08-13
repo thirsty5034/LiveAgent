@@ -265,7 +265,9 @@ test("final persist catches up multiple segment jumps one append at a time", asy
   assert.equal(recorder.calls[0].cmd, "chat_history_append_segment");
   assert.equal(recorder.calls[0].args.input.segment.segmentId, "seg-1");
   assert.equal(recorder.calls[0].args.input.conversation.activeSegmentIndex, 1);
-  assert.equal(recorder.calls[0].args.input.conversation.totalSegmentCount, 3);
+  // Intermediate step must advertise post-step totals: backend append requires
+  // totalSegmentCount == stored + 1; consistency check compares full-table COUNT/SUM.
+  assert.equal(recorder.calls[0].args.input.conversation.totalSegmentCount, 2);
   assert.equal(recorder.calls[0].args.input.conversation.totalMessageCount, 3);
 
   await resolveCall(recorder.calls[0], "conv-multi-jump", 40);
@@ -276,6 +278,7 @@ test("final persist catches up multiple segment jumps one append at a time", asy
   assert.equal(recorder.calls[1].cmd, "chat_history_append_segment");
   assert.equal(recorder.calls[1].args.input.segment.segmentId, "seg-2");
   assert.equal(recorder.calls[1].args.input.conversation.activeSegmentIndex, 2);
+  assert.equal(recorder.calls[1].args.input.conversation.totalSegmentCount, 3);
   assert.equal(recorder.calls[1].args.input.conversation.totalMessageCount, 6);
 
   await resolveCall(recorder.calls[1], "conv-multi-jump", 41);

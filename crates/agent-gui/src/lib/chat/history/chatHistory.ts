@@ -1,6 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import { invoke } from "@tauri-apps/api/core";
-import { parseTaskListState } from "../../tools/taskState";
+import { invoke } from "../../../lib/tauriBridge";
 import { normalizeConversationSystemPrompt } from "../context/systemPrompt";
 import {
   type ConversationViewState,
@@ -234,19 +233,7 @@ function parseStoredChatContextMeta(
     activeSegmentIndex: counts.activeSegmentIndex,
     totalSegmentCount: counts.totalSegmentCount,
     totalMessageCount: counts.totalMessageCount,
-    taskList: parseStoredTaskListState(parsed.taskList),
   };
-}
-
-function parseStoredTaskListState(value: unknown) {
-  if (value === undefined) return undefined;
-  try {
-    return parseTaskListState(value);
-  } catch (error) {
-    // 任务清单是辅助运行态:损坏数据只丢弃清单本身,绝不能让整个会话窗口打不开。
-    console.warn("忽略无法解析的历史任务清单状态", error);
-    return undefined;
-  }
 }
 
 export async function listChatHistory(
@@ -423,11 +410,6 @@ function buildChatHistoryConversationInput(params: {
     state,
   } = params;
 
-  // Header totals must stay anchored on state.meta. After a conversation is
-  // reopened from history, state.segments only holds the active segment while
-  // meta.totalMessageCount still counts every sealed row in SQLite — summing
-  // the in-memory segments would undercount and trip the backend segment-sum
-  // consistency check on every persist.
   return {
     id: conversationId,
     title,
@@ -503,12 +485,6 @@ export async function setChatHistoryPinned(id: string, isPinned: boolean) {
 export async function setChatHistoryModel(id: string, selectedModelJson: string) {
   return withConversationWriteLock(id, () =>
     invoke<ChatHistorySummary>("chat_history_set_model", { id, selectedModelJson }),
-  );
-}
-
-export async function setChatHistoryCwd(id: string, cwd: string) {
-  return withConversationWriteLock(id, () =>
-    invoke<ChatHistorySummary>("chat_history_set_cwd", { id, cwd }),
   );
 }
 
@@ -665,8 +641,6 @@ async function writeConversationRuntime(
       throw new Error("待封存历史分段身份与持久化游标不一致");
     }
 
-    // fork main headless append_segment takes {conversation, segment} only
-    // (upstream PR #445 also sends previousSegment; local cursor checks cover it).
     summary = await appendChatHistorySegmentRaw({
       conversation: conversationInputForCursor(conversation, state, nextSegment.segmentIndex),
       segment: buildChatHistorySegmentInput(nextSegment),
