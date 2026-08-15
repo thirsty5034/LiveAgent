@@ -1465,20 +1465,66 @@ export function ChatPage(props: ChatPageProps) {
   // Headless WebUI deep-link: persist the active conversation in ?c= + sessionStorage
   // so a browser refresh reopens it (and re-subscribes to any live run) instead of
   // landing on a blank draft. Desktop Tauri does not browser-refresh the same way.
+  //
+  // Ordering matters: restore must win over the draft-id sync wipe. On mount the
+  // page still has a fresh draft identity; writing that draft as "no conversation"
+  // would clear ?c= before restore can open the real id.
   const conversationRouteAgentId = "local";
   const conversationRestoreAttemptKeyRef = useRef("");
+  const conversationRestorePendingIdRef = useRef("");
+
   useEffect(() => {
     if (isTauri()) {
       return;
     }
+    const attemptKey = conversationRouteAgentId;
+    if (conversationRestoreAttemptKeyRef.current === attemptKey) {
+      return;
+    }
+    const currentIsDraft = !historyItems.some((item) => item.id === currentConversationId);
+    if (!currentIsDraft && isRoutableConversationId(currentConversationId)) {
+      conversationRestoreAttemptKeyRef.current = attemptKey;
+      conversationRestorePendingIdRef.current = "";
+      return;
+    }
+    const restoreId = resolveConversationIdToRestore({ agentId: conversationRouteAgentId });
+    conversationRestoreAttemptKeyRef.current = attemptKey;
+    if (!restoreId || restoreId === currentConversationId) {
+      conversationRestorePendingIdRef.current = "";
+      return;
+    }
+    conversationRestorePendingIdRef.current = restoreId;
+    const timer = window.setTimeout(() => {
+      handleSelectConversationRef.current(restoreId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [currentConversationId, historyItems]);
+
+  useEffect(() => {
+    if (isTauri()) {
+      return;
+    }
+    const pendingRestoreId = conversationRestorePendingIdRef.current.trim();
     const persisted =
       historyItems.some((item) => item.id === currentConversationId) ||
       isSending ||
       isConversationRunning(currentConversationId) ||
       sidebarStore.peek(currentConversationId)?.isPending === true;
+    if (persisted) {
+      conversationRestorePendingIdRef.current = "";
+      syncActiveConversationRoute({
+        agentId: conversationRouteAgentId,
+        conversationId: currentConversationId,
+      });
+      return;
+    }
+    // Keep an in-flight deep-link while the mount draft is still selected.
+    if (pendingRestoreId && pendingRestoreId !== currentConversationId) {
+      return;
+    }
     syncActiveConversationRoute({
       agentId: conversationRouteAgentId,
-      conversationId: persisted ? currentConversationId : null,
+      conversationId: null,
     });
   }, [
     currentConversationId,
@@ -1489,33 +1535,15 @@ export function ChatPage(props: ChatPageProps) {
   ]);
 
   useEffect(() => {
-    if (isTauri()) {
-      return;
-    }
-    const attemptKey = conversationRouteAgentId;
-    if (conversationRestoreAttemptKeyRef.current === attemptKey) {
-      return;
-    }
-    // Only restore when still on the mount-time blank draft (no history row yet).
-    const currentIsDraft = !historyItems.some((item) => item.id === currentConversationId);
-    if (!currentIsDraft && isRoutableConversationId(currentConversationId)) {
-      conversationRestoreAttemptKeyRef.current = attemptKey;
-      return;
-    }
-    const restoreId = resolveConversationIdToRestore({ agentId: conversationRouteAgentId });
-    conversationRestoreAttemptKeyRef.current = attemptKey;
-    if (!restoreId || restoreId === currentConversationId) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      handleSelectConversationRef.current(restoreId);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [currentConversationId, historyItems]);
-
-  useEffect(() => {
     if (isTauri()) return;
     if (!hydrationFailedConversationId) return;
+    if (
+      conversationRestorePendingIdRef.current &&
+      conversationRestorePendingIdRef.current !== hydrationFailedConversationId
+    ) {
+      return;
+    }
+    conversationRestorePendingIdRef.current = "";
     // Stale deep-link: drop route so refresh does not loop on a missing id.
     syncActiveConversationRoute({ agentId: "local", conversationId: null });
     // hydrationFailedConversationId route clear

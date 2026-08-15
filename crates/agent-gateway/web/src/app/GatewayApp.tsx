@@ -441,6 +441,8 @@ export default function GatewayApp() {
   const composerDraftOwnerRef = useRef("");
   const conversationIdRef = useRef(conversationId);
   const selectedHistoryIdRef = useRef(selectedHistoryId);
+  // Shared with the deep-link restore effect so mount-time drafts cannot wipe ?c=.
+  const conversationRestorePendingIdRef = useRef("");
   const statusRef = useRef<AgentStatus | null>(status);
   const queuedChatTurnsRef = useRef<ChatQueueItemSummary[]>([]);
   const chatQueueConversationIdRef = useRef("");
@@ -2124,6 +2126,8 @@ export default function GatewayApp() {
 
   // Keep URL (?c=) + sessionStorage aligned with the real displayed conversation
   // so a browser refresh can restore selection and rejoin the stream.
+  // Never clear a pending deep-link while the displayed id is still a draft /
+  // empty — that race is what wiped ?c= on reload before restore could open.
   useEffect(() => {
     if (!api || historyShareToken) {
       return;
@@ -2132,7 +2136,19 @@ export default function GatewayApp() {
     if (!agentId) {
       return;
     }
-    syncDisplayedConversationRoute(agentId, displayedConversationId);
+    if (isRoutableConversationId(displayedConversationId)) {
+      conversationRestorePendingIdRef.current = "";
+      syncDisplayedConversationRoute(agentId, displayedConversationId);
+      return;
+    }
+    const pending =
+      conversationRestorePendingIdRef.current.trim() ||
+      resolveConversationIdToRestore({ agentId });
+    if (pending) {
+      conversationRestorePendingIdRef.current = pending;
+      return;
+    }
+    syncDisplayedConversationRoute(agentId, null);
   }, [activeAgentScope, api, displayedConversationId, historyShareToken]);
 
   // 后台订阅接线经 ref 稳定化（缺陷 #5）：handleConversationStreamEvent/Sync 的
@@ -3658,14 +3674,17 @@ export default function GatewayApp() {
     ).trim();
     if (currentId && isRoutableConversationId(currentId)) {
       conversationRestoreAttemptKeyRef.current = attemptKey;
+      conversationRestorePendingIdRef.current = "";
       syncDisplayedConversationRoute(agentId, currentId);
       return;
     }
     const restoreId = resolveConversationIdToRestore({ agentId });
     conversationRestoreAttemptKeyRef.current = attemptKey;
     if (!restoreId) {
+      conversationRestorePendingIdRef.current = "";
       return;
     }
+    conversationRestorePendingIdRef.current = restoreId;
     const timer = window.setTimeout(() => {
       const stillEmpty = !isRoutableConversationId(
         resolveVisibleConversationId(
