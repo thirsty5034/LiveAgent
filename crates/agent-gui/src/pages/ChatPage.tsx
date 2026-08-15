@@ -1488,13 +1488,17 @@ export function ChatPage(props: ChatPageProps) {
       return;
     }
     const restoreId = resolveConversationIdToRestore({ agentId: conversationRouteAgentId });
-    conversationRestoreAttemptKeyRef.current = attemptKey;
     if (!restoreId || restoreId === currentConversationId) {
+      conversationRestoreAttemptKeyRef.current = attemptKey;
       conversationRestorePendingIdRef.current = "";
       return;
     }
+    // Mark attempted only when the open actually fires. React StrictMode will
+    // mount→cleanup→remount and cancel a 0ms timeout; setting the attempt key
+    // before that would permanently skip restore on the second mount.
     conversationRestorePendingIdRef.current = restoreId;
     const timer = window.setTimeout(() => {
+      conversationRestoreAttemptKeyRef.current = attemptKey;
       handleSelectConversationRef.current(restoreId);
     }, 0);
     return () => window.clearTimeout(timer);

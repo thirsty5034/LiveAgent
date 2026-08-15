@@ -3679,13 +3679,16 @@ export default function GatewayApp() {
       return;
     }
     const restoreId = resolveConversationIdToRestore({ agentId });
-    conversationRestoreAttemptKeyRef.current = attemptKey;
     if (!restoreId) {
+      conversationRestoreAttemptKeyRef.current = attemptKey;
       conversationRestorePendingIdRef.current = "";
       return;
     }
+    // Mark attempted only when open fires — StrictMode cancels the 0ms timer
+    // between double-mounts and must be allowed to reschedule.
     conversationRestorePendingIdRef.current = restoreId;
     const timer = window.setTimeout(() => {
+      conversationRestoreAttemptKeyRef.current = attemptKey;
       const stillEmpty = !isRoutableConversationId(
         resolveVisibleConversationId(
           selectedHistoryIdRef.current,
