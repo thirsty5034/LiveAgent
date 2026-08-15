@@ -42,6 +42,11 @@ import {
   selectConversations,
   selectRunningConversationIds,
 } from "@liveagent/ui/lib/sidebar/selectors";
+import {
+  isRoutableConversationId,
+  resolveConversationIdToRestore,
+  syncActiveConversationRoute,
+} from "@liveagent/ui/lib/chat/conversationRoute";
 import { createSidebarStore } from "@liveagent/ui/lib/sidebar/store";
 import { useSidebarSelector } from "@liveagent/ui/lib/sidebar/useSidebarSelector";
 import { buildSkillsSystemPrompt, type SkillSummary } from "@liveagent/ui/lib/skills/index";
@@ -96,7 +101,7 @@ import {
 import { tauriSftpClient } from "../lib/sftp/tauriSftpClient";
 import { createGuiSidebarBackend } from "../lib/sidebar/guiSidebarBackend";
 import { createSubagentStoreManager } from "../lib/subagents";
-import { listen } from "../lib/tauriBridge";
+import { isTauri, listen } from "../lib/tauriBridge";
 import { tauriTerminalClient } from "../lib/terminal/tauriTerminalClient";
 import { cancelPendingAskUserQuestionsForConversation } from "../lib/tools/askUserQuestionTools";
 import {
@@ -1454,6 +1459,67 @@ export function ChatPage(props: ChatPageProps) {
     },
     [openController],
   );
+  const handleSelectConversationRef = useRef(handleSelectConversation);
+  handleSelectConversationRef.current = handleSelectConversation;
+
+  // Headless WebUI deep-link: persist the active conversation in ?c= + sessionStorage
+  // so a browser refresh reopens it (and re-subscribes to any live run) instead of
+  // landing on a blank draft. Desktop Tauri does not browser-refresh the same way.
+  const conversationRouteAgentId = "local";
+  const conversationRestoreAttemptKeyRef = useRef("");
+  useEffect(() => {
+    if (isTauri()) {
+      return;
+    }
+    const persisted =
+      historyItems.some((item) => item.id === currentConversationId) ||
+      isSending ||
+      isConversationRunning(currentConversationId) ||
+      sidebarStore.peek(currentConversationId)?.isPending === true;
+    syncActiveConversationRoute({
+      agentId: conversationRouteAgentId,
+      conversationId: persisted ? currentConversationId : null,
+    });
+  }, [
+    currentConversationId,
+    historyItems,
+    isConversationRunning,
+    isSending,
+    sidebarStore,
+  ]);
+
+  useEffect(() => {
+    if (isTauri()) {
+      return;
+    }
+    const attemptKey = conversationRouteAgentId;
+    if (conversationRestoreAttemptKeyRef.current === attemptKey) {
+      return;
+    }
+    // Only restore when still on the mount-time blank draft (no history row yet).
+    const currentIsDraft = !historyItems.some((item) => item.id === currentConversationId);
+    if (!currentIsDraft && isRoutableConversationId(currentConversationId)) {
+      conversationRestoreAttemptKeyRef.current = attemptKey;
+      return;
+    }
+    const restoreId = resolveConversationIdToRestore({ agentId: conversationRouteAgentId });
+    conversationRestoreAttemptKeyRef.current = attemptKey;
+    if (!restoreId || restoreId === currentConversationId) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      handleSelectConversationRef.current(restoreId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [currentConversationId, historyItems]);
+
+  useEffect(() => {
+    if (isTauri()) return;
+    if (!hydrationFailedConversationId) return;
+    // Stale deep-link: drop route so refresh does not loop on a missing id.
+    syncActiveConversationRoute({ agentId: "local", conversationId: null });
+    // hydrationFailedConversationId route clear
+  }, [hydrationFailedConversationId]);
 
   // 托盘/快捷键动作参数的 ref 镜像：监听 effect 是 []-dep，闭包内一律
   // 经 ref 取最新值（handleSelectWorkspaceProject 等依赖 settings，不稳定）。

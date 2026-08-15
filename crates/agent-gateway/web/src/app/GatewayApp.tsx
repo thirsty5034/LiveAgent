@@ -64,6 +64,11 @@ import type { ChatHistorySummary } from "@/lib/chat/chatHistory";
 import { buildModelOptions } from "@/lib/chat/chatPageHelpers";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
 import {
+  isRoutableConversationId,
+  resolveConversationIdToRestore,
+  syncActiveConversationRoute,
+} from "@/lib/chat/conversationRoute";
+import {
   adoptHistoryWindowState,
   evaluateHistoryWindowResponse,
   type HistoryWindowState,
@@ -144,6 +149,13 @@ function createLocalDraftConversationId() {
 }
 function isLocalDraftConversationId(id: string) {
   return id.trim().startsWith(LOCAL_DRAFT_PREFIX);
+}
+
+function syncDisplayedConversationRoute(agentId: string, conversationId: string | null | undefined) {
+  syncActiveConversationRoute({
+    agentId,
+    conversationId: isRoutableConversationId(conversationId ?? "") ? conversationId : null,
+  });
 }
 
 import { ChangedFilesActionsProvider } from "@liveagent/ui/components/chat/ChangedFilesCard";
@@ -2110,6 +2122,19 @@ export default function GatewayApp() {
   });
   displayedConversationBusyRef.current = displayedConversationBusy;
 
+  // Keep URL (?c=) + sessionStorage aligned with the real displayed conversation
+  // so a browser refresh can restore selection and rejoin the stream.
+  useEffect(() => {
+    if (!api || historyShareToken) {
+      return;
+    }
+    const agentId = (activeAgentScope || api.getActiveAgent() || "").trim();
+    if (!agentId) {
+      return;
+    }
+    syncDisplayedConversationRoute(agentId, displayedConversationId);
+  }, [activeAgentScope, api, displayedConversationId, historyShareToken]);
+
   // 后台订阅接线经 ref 稳定化（缺陷 #5）：handleConversationStreamEvent/Sync 的
   // useCallback 身份随 locale/pipeline 回调变化，若入 effect 依赖会在 pending 期间
   // 反复退订/重订并重放全量 sync。改用 ref 读取最新实现，effect 只依赖
@@ -2404,6 +2429,12 @@ export default function GatewayApp() {
           has_more: false,
         } satisfies HistoryDetail);
         setChatError(message);
+        // Stale deep-link / deleted conversation: drop the route so refresh does
+        // not keep reopening a missing id.
+        const agentId = (activeAgentIdRef.current || apiRef.current?.getActiveAgent() || "").trim();
+        if (agentId) {
+          syncDisplayedConversationRoute(agentId, null);
+        }
       }
       throw error;
     }
@@ -3003,6 +3034,10 @@ export default function GatewayApp() {
     setChatError(null);
     setSelectedHistory(null);
     setPendingUploadsForConversation(nextConversationId, []);
+    const agentId = (activeAgentIdRef.current || apiRef.current?.getActiveAgent() || "").trim();
+    if (agentId) {
+      syncDisplayedConversationRoute(agentId, null);
+    }
   }
 
   const {
@@ -3600,6 +3635,52 @@ export default function GatewayApp() {
   // stays stable for the memoized transcript region.
   const selectConversationRef = useRef(handleSidebarSelectConversation);
   selectConversationRef.current = handleSidebarSelectConversation;
+
+  // Restore the last/URL conversation after a full page load so mid-stream
+  // refresh re-subscribes via chat.subscribe instead of landing on a blank
+  // welcome view. Draft ids are never restored (see conversationRoute.ts).
+  const conversationRestoreAttemptKeyRef = useRef("");
+  useEffect(() => {
+    if (!api || historyShareToken) {
+      return;
+    }
+    const agentId = (activeAgentScope || api.getActiveAgent() || "").trim();
+    if (!agentId) {
+      return;
+    }
+    const attemptKey = `${agentId}`;
+    if (conversationRestoreAttemptKeyRef.current === attemptKey) {
+      return;
+    }
+    const currentId = resolveVisibleConversationId(
+      selectedHistoryIdRef.current,
+      conversationIdRef.current,
+    ).trim();
+    if (currentId && isRoutableConversationId(currentId)) {
+      conversationRestoreAttemptKeyRef.current = attemptKey;
+      syncDisplayedConversationRoute(agentId, currentId);
+      return;
+    }
+    const restoreId = resolveConversationIdToRestore({ agentId });
+    conversationRestoreAttemptKeyRef.current = attemptKey;
+    if (!restoreId) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const stillEmpty = !isRoutableConversationId(
+        resolveVisibleConversationId(
+          selectedHistoryIdRef.current,
+          conversationIdRef.current,
+        ).trim(),
+      );
+      if (!stillEmpty) {
+        return;
+      }
+      selectConversationRef.current(restoreId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeAgentScope, api, historyShareToken]);
+
   // The button stays clickable during the WS round-trip; a ref (not state)
   // blocks duplicate confirms without changing the callback identity, while
   // the pending-anchor state drives the clicked row's spinner.
@@ -3710,6 +3791,11 @@ export default function GatewayApp() {
     resetProjectToolsRuntimeRef.current();
     setSelectedHistoryId("");
     setSelectedHistory(null);
+    const agentId = (activeAgentIdRef.current || "").trim();
+    if (agentId) {
+      syncDisplayedConversationRoute(agentId, null);
+    }
+    conversationRestoreAttemptKeyRef.current = "";
   }, [
     activityStore,
     chatCommandPipeline,
@@ -3792,6 +3878,10 @@ export default function GatewayApp() {
       setRightDockOpen(false);
       setNotifyItems([]);
       resetProjectToolsRuntimeRef.current();
+      // Drop previous agent's conversation deep-link; the restore effect re-runs
+      // for the next agent via conversationRestoreAttemptKeyRef reset below.
+      syncDisplayedConversationRoute(nextAgentId, null);
+      conversationRestoreAttemptKeyRef.current = "";
     },
     [
       activityStore,
