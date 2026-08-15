@@ -72,7 +72,7 @@ import {
   pruneSubagentRunsForConversation,
   type SubagentStoreManager,
 } from "../../../lib/subagents";
-import { invoke } from "../../../lib/tauriBridge";
+import { armHeadlessUnloadKeepalive, invoke } from "../../../lib/tauriBridge";
 import type { SkillAccessPolicy } from "../../../lib/tools/skillAccessPolicy";
 import type { TaskStateStore } from "../../../lib/tools/taskTools";
 import { asErrorMessage } from "../chatPageUtils";
@@ -1385,6 +1385,114 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       return true;
     };
 
+    // Progressive history checkpoints while the browser still holds the live
+    // stream. Headless runs the agent in-page: a refresh kills JS and would
+    // otherwise leave DB stuck on the user-only snapshot. These checkpoints
+    // rewrite the active segment with the best partial assistant so reopen
+    // recovers the answer (or most of it).
+    const STREAMING_CHECKPOINT_INTERVAL_MS = 3_000;
+    const STREAMING_CHECKPOINT_MIN_CHARS = 80;
+    let lastStreamingCheckpointChars = 0;
+    let streamingCheckpointInFlight: Promise<void> | null = null;
+    let streamingCheckpointTimer: number | null = null;
+    let streamingUnloadCleanup: (() => void) | null = null;
+
+    function measureStreamingPartialChars(snapshot: {
+      draftAssistantText: string;
+      liveRounds: Array<{ blocks?: Array<{ kind?: string; text?: string }> }>;
+    }) {
+      let total = snapshot.draftAssistantText.length;
+      for (const round of snapshot.liveRounds) {
+        for (const block of round.blocks ?? []) {
+          if (block.kind === "text" && typeof block.text === "string") {
+            total += block.text.length;
+          }
+        }
+      }
+      return total;
+    }
+
+    function persistStreamingCheckpoint(force = false) {
+      if (abortedConversationCommitted || streamingCheckpointInFlight) {
+        return streamingCheckpointInFlight;
+      }
+      const snapshot = getAbortSnapshot(transcriptStore);
+      const chars = measureStreamingPartialChars(snapshot);
+      if (
+        !force &&
+        (chars < STREAMING_CHECKPOINT_MIN_CHARS ||
+          chars - lastStreamingCheckpointChars < STREAMING_CHECKPOINT_MIN_CHARS)
+      ) {
+        return null;
+      }
+      const partialMessages = buildPersistableMessagesFromSnapshot({
+        executionMode: effectiveExecutionMode,
+        model: runtimeModel,
+        draftAssistantText: snapshot.draftAssistantText,
+        liveRounds: snapshot.liveRounds,
+        completedThroughRound: persistableAgentProgress.completedThroughRound,
+        suppressedToolTrace: persistableAgentProgress.suppressedToolTrace,
+      });
+      if (partialMessages.length === 0) {
+        return null;
+      }
+      // Do not mutate the in-memory run state — only rewrite durable history so
+      // a later successful terminal persist still owns the authoritative end state.
+      const checkpointState = appendMessagesToConversation(nextConversationState, partialMessages);
+      lastStreamingCheckpointChars = chars;
+      streamingCheckpointInFlight = persistConversationWithHistorySync({
+        conversationId,
+        sessionId,
+        providerId,
+        model,
+        selectedModel,
+        cwd: conversationCwd,
+        state: checkpointState,
+        fallbackTitle,
+        createdAt,
+        titlePromise,
+      })
+        .catch((error) => {
+          console.warn("streaming history checkpoint failed", error);
+          return false;
+        })
+        .then(() => undefined)
+        .finally(() => {
+          streamingCheckpointInFlight = null;
+        });
+      return streamingCheckpointInFlight;
+    }
+
+    function startStreamingHistoryCheckpoints() {
+      if (typeof window === "undefined") {
+        return;
+      }
+      if (streamingCheckpointTimer !== null) {
+        return;
+      }
+      streamingCheckpointTimer = window.setInterval(() => {
+        void persistStreamingCheckpoint(false);
+      }, STREAMING_CHECKPOINT_INTERVAL_MS);
+
+      const flushOnUnload = () => {
+        // Keepalive lets the history write finish after the document unloads.
+        armHeadlessUnloadKeepalive();
+        if (!commitVisibleAbortedConversation()) {
+          void persistStreamingCheckpoint(true);
+        }
+      };
+      window.addEventListener("pagehide", flushOnUnload);
+      window.addEventListener("beforeunload", flushOnUnload);
+      streamingUnloadCleanup = () => {
+        window.removeEventListener("pagehide", flushOnUnload);
+        window.removeEventListener("beforeunload", flushOnUnload);
+        if (streamingCheckpointTimer !== null) {
+          window.clearInterval(streamingCheckpointTimer);
+          streamingCheckpointTimer = null;
+        }
+      };
+    }
+
     const commitErroredConversation = (rawMessage: string) => {
       const snapshot = getAbortSnapshot(transcriptStore);
       const partialMessages = buildPersistableMessagesFromSnapshot({
@@ -1468,6 +1576,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       },
     };
 
+    startStreamingHistoryCheckpoints();
     try {
       if (effectiveIsAgentMode) {
         await chatRuntimeHost.runTurn({
@@ -1628,6 +1737,11 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
         titleJobRef.current = null;
       }
     } finally {
+      if (streamingUnloadCleanup) {
+        const stopStreamingCheckpoints: () => void = streamingUnloadCleanup;
+        streamingUnloadCleanup = null;
+        stopStreamingCheckpoints();
+      }
       releaseConversationRunUi();
       if (compactionBound) {
         compaction.unbindTurn();

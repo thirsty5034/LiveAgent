@@ -63,7 +63,29 @@ export function resolveHeadlessBaseUrl(): string {
  * In a headless browser it POSTs to the headless server and normalizes the
  * {ok, value|error} envelope back to Tauri-style promise semantics.
  */
-export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+export type InvokeOptions = {
+  /**
+   * Headless-only: keep the fetch alive across page navigations/unloads so a
+   * mid-stream history checkpoint can still land when the user refreshes.
+   */
+  keepalive?: boolean;
+};
+
+// Sticky flag for unload flush paths: pagehide starts async history writes that
+// must outlive the document, so every subsequent headless invoke keeps the
+// fetch alive until the page is gone.
+let headlessUnloadKeepalive = false;
+
+/** Arm keepalive for headless invokes during pagehide/beforeunload flushes. */
+export function armHeadlessUnloadKeepalive(): void {
+  headlessUnloadKeepalive = true;
+}
+
+export async function invoke<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+  options?: InvokeOptions,
+): Promise<T> {
   if (isTauriRuntime()) {
     const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
     return tauriInvoke<T>(cmd, args as never);
@@ -84,12 +106,14 @@ export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Pr
     return (await openFolderPicker({ initialPath: initial })) as T;
   }
 
-  const maxRetries = 2;
+  const useKeepalive = options?.keepalive === true || headlessUnloadKeepalive;
+  const maxRetries = useKeepalive ? 0 : 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(`${resolveHeadlessBaseUrl()}/api/invoke`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cmd, args: args ?? {} }),
+      keepalive: useKeepalive,
     });
     if (response.status === 429) {
       if (attempt < maxRetries) {
