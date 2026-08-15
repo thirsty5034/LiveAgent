@@ -1,4 +1,10 @@
-import type { Context, Message, TextContent, ToolResultMessage } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  Context,
+  Message,
+  TextContent,
+  ToolResultMessage,
+} from "@earendil-works/pi-ai";
 import { normalizeHostedSearchBlock } from "@liveagent/ui/lib/chat/hostedSearch";
 import { isSubagentCardToolCall } from "../../subagents/card";
 import type { DisplayImageItemDetails, DisplayImageResultDetails } from "../../tools/builtinTypes";
@@ -219,12 +225,33 @@ export function sanitizeMessagesForModelContext(messages: Message[]): Message[] 
     );
 }
 
+function assistantHasTextContent(message: AssistantMessage): boolean {
+  return message.content.some(
+    (block) => block.type === "text" && typeof block.text === "string" && block.text.trim().length > 0,
+  );
+}
+
+function assistantHasToolCallContent(message: AssistantMessage): boolean {
+  return message.content.some((block) => block.type === "toolCall");
+}
+
 export function stripAbortedMessagesForModelContext(messages: Message[]): Message[] {
   const sanitized: Message[] = [];
 
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     if (message.role === "assistant" && message.stopReason === "aborted") {
+      // Keep text-only partial answers (refresh mid-stream) so a continue turn
+      // can see already-written content. Drop aborted tool-use rounds that would
+      // leave the model with dangling tool calls.
+      if (assistantHasTextContent(message) && !assistantHasToolCallContent(message)) {
+        sanitized.push({
+          ...message,
+          stopReason: "stop",
+          errorMessage: undefined,
+        });
+        continue;
+      }
       while (index + 1 < messages.length && messages[index + 1]?.role === "toolResult") {
         index += 1;
       }

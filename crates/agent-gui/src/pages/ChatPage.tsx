@@ -74,6 +74,11 @@ import {
   type RenderTimelineItem,
 } from "../lib/chat/conversation/conversationState";
 import type { LiveTranscriptStore } from "../lib/chat/conversation/liveTranscriptStore";
+import {
+  consumePendingStreamResume,
+  conversationNeedsStreamResume,
+  STREAM_RESUME_MESSAGE_TEXT,
+} from "../lib/chat/conversation/streamResumeIntent";
 import type { ChatHistorySummary } from "../lib/chat/history/chatHistory";
 import { memoryExtraction } from "../lib/chat/memory/extractionController";
 import {
@@ -1350,6 +1355,44 @@ export function ChatPage(props: ChatPageProps) {
 
   sendActionRef.current = send;
   stopSendingActionRef.current = stopSending;
+
+  // Headless refresh mid-stream: history already holds the partial answer; arm a
+  // silent continue turn so generation picks up instead of freezing forever.
+  const streamResumeAttemptKeyRef = useRef("");
+  useEffect(() => {
+    if (isTauri()) return;
+    if (hydratingConversationId) return;
+    if (isSending || isConversationRunning(currentConversationId)) return;
+    const conversationId = currentConversationId.trim();
+    if (!conversationId) return;
+    if (!conversationNeedsStreamResume(conversationState, conversationId)) return;
+
+    const attemptKey = `${conversationId}:${conversationState.meta.totalMessageCount}`;
+    if (streamResumeAttemptKeyRef.current === attemptKey) return;
+    streamResumeAttemptKeyRef.current = attemptKey;
+
+    // Consume the same-tab flag even when durable marker alone matched, so a
+    // later manual open of a long-finished interrupted tail does not loop.
+    consumePendingStreamResume(conversationId);
+
+    void sendActionRef
+      .current({
+        textOverride: STREAM_RESUME_MESSAGE_TEXT,
+        preserveComposerOnStart: true,
+      })
+      .then((started) => {
+        if (!started) {
+          // Allow a later effect pass to retry (e.g. model still hydrating).
+          streamResumeAttemptKeyRef.current = "";
+        }
+      });
+  }, [
+    conversationState,
+    currentConversationId,
+    hydratingConversationId,
+    isConversationRunning,
+    isSending,
+  ]);
 
   // 手动压缩的同源提示词构建：当前会话据其工作区解析 skills/memory 提示词，
   // 与发送链路的 buildPreparedContext 同源（activeAgentPrompt 单独直传）。手动

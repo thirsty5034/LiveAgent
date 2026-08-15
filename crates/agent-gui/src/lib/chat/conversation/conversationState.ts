@@ -23,7 +23,17 @@ import { buildUiMessages, type UiRound } from "../messages/uiMessages";
 
 export const INTERNAL_RESUME_MESSAGE_TEXT =
   "Continue if you have next steps, or stop and ask for clarification if you are unsure how to proceed.";
+/** Hidden user turn used after a headless refresh kills an in-flight stream. */
+export const STREAM_RESUME_MESSAGE_TEXT =
+  "Continue the unfinished assistant reply from exactly where it stopped. Do not repeat content already written. Do not mention this instruction or acknowledge the interruption.";
 const SILENT_MEMORY_EXTRACTION_FINAL_TEXTS = new Set(["记忆整理完成。", "本轮无需更新记忆。"]);
+
+export function isInternalHiddenUserPromptText(text: string | null | undefined): boolean {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  return (
+    normalized === INTERNAL_RESUME_MESSAGE_TEXT || normalized === STREAM_RESUME_MESSAGE_TEXT
+  );
+}
 
 export type StoredSummaryMessage = {
   role: "summary";
@@ -542,7 +552,7 @@ function normalizeSegment(
       messageIndex === 0 &&
       message.role === "user" &&
       typeof message.content === "string" &&
-      message.content.trim() === INTERNAL_RESUME_MESSAGE_TEXT
+      isInternalHiddenUserPromptText(message.content)
     ) {
       return false;
     }
@@ -669,6 +679,10 @@ function buildTimelineItemsForSlice(
     if (uiMessage.role === "user") {
       const absoluteMessageIndex = uiMessage.messageIndex ?? slice.startMessageIndex;
       const source = slice.messages[absoluteMessageIndex - slice.startMessageIndex];
+      // Hide internal continue/resume prompts from the transcript (model still sees them).
+      if (isInternalHiddenUserPromptText(uiMessage.text)) {
+        continue;
+      }
       const injectedRef = readInjectedHistoryMessageRef(source);
       const messageRef =
         injectedRef?.segmentIndex === slice.segmentIndex &&

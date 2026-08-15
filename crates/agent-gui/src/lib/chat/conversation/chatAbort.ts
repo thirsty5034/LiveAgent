@@ -198,6 +198,9 @@ export function buildAbortedMessagesFromSnapshot(params: {
   return messages;
 }
 
+/** Durable marker written when a headless page unload kills an in-flight stream. */
+export const STREAM_INTERRUPTED_BY_NAVIGATION = "liveagent:stream_interrupted_by_navigation";
+
 function extractAssistantText(message: AssistantMessage) {
   let text = "";
   for (const block of message.content) {
@@ -208,7 +211,28 @@ function extractAssistantText(message: AssistantMessage) {
   return text.trim();
 }
 
-function toPersistableAbortedAssistant(message: AssistantMessage): AssistantMessage | null {
+export function isStreamInterruptedAssistant(
+  message: Message | AssistantMessage | null | undefined,
+): message is AssistantMessage {
+  return Boolean(
+    message &&
+      message.role === "assistant" &&
+      message.stopReason === "aborted" &&
+      message.errorMessage === STREAM_INTERRUPTED_BY_NAVIGATION,
+  );
+}
+
+export function assistantMessageHasVisibleText(
+  message: Message | AssistantMessage | null | undefined,
+): boolean {
+  if (!message || message.role !== "assistant") return false;
+  return extractAssistantText(message).length > 0;
+}
+
+function toPersistableAbortedAssistant(
+  message: AssistantMessage,
+  options?: { streamInterrupted?: boolean },
+): AssistantMessage | null {
   const text = extractAssistantText(message);
   const hostedSearchBlocks = (message.content as unknown[]).filter(
     (block): block is AssistantMessage["content"][number] =>
@@ -219,20 +243,27 @@ function toPersistableAbortedAssistant(message: AssistantMessage): AssistantMess
   if (!text && hostedSearchBlocks.length === 0) {
     return null;
   }
+  const keepInterruptedMarker =
+    options?.streamInterrupted === true ||
+    message.errorMessage === STREAM_INTERRUPTED_BY_NAVIGATION;
   return {
     ...message,
     content: [...(text ? [{ type: "text" as const, text }] : []), ...hostedSearchBlocks],
-    errorMessage: undefined,
+    // Preserve the unload marker so refresh can auto-resume; drop other abort noise.
+    errorMessage: keepInterruptedMarker ? STREAM_INTERRUPTED_BY_NAVIGATION : undefined,
   };
 }
 
-export function sanitizeAbortedHistoryMessages(messages: Message[]): Message[] {
+export function sanitizeAbortedHistoryMessages(
+  messages: Message[],
+  options?: { streamInterrupted?: boolean },
+): Message[] {
   const sanitized: Message[] = [];
 
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
     if (message.role === "assistant" && message.stopReason === "aborted") {
-      const persistable = toPersistableAbortedAssistant(message);
+      const persistable = toPersistableAbortedAssistant(message, options);
       if (persistable) {
         sanitized.push(persistable);
       }
@@ -255,6 +286,13 @@ export function buildPersistableMessagesFromSnapshot(params: {
   completedThroughRound?: number;
   suppressedToolTrace?: SuppressedToolTraceSnapshot[];
   timestamp?: number;
+  streamInterrupted?: boolean;
 }) {
-  return sanitizeAbortedHistoryMessages(buildAbortedMessagesFromSnapshot(params));
+  return sanitizeAbortedHistoryMessages(buildAbortedMessagesFromSnapshot(params), {
+    streamInterrupted: params.streamInterrupted,
+  });
+}
+
+export function markMessagesStreamInterrupted(messages: Message[]): Message[] {
+  return sanitizeAbortedHistoryMessages(messages, { streamInterrupted: true });
 }

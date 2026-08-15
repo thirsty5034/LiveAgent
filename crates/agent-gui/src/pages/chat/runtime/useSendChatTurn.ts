@@ -35,6 +35,10 @@ import {
   setTaskListState,
 } from "../../../lib/chat/conversation/conversationState";
 import {
+  clearPendingStreamResume,
+  markPendingStreamResume,
+} from "../../../lib/chat/conversation/streamResumeIntent";
+import {
   createConversationHookLifecycle,
   createGatewayBridgeEventController,
 } from "../../../lib/chat/conversation/run";
@@ -1350,7 +1354,12 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       completedThroughRound: 0,
       suppressedToolTrace: [],
     };
-    const commitVisibleAbortedConversation = () => {
+    // True when pagehide/beforeunload flushed a partial answer. Prevents the
+    // run's finally block from clearing the same-tab resume intent after JS is
+    // torn down by a refresh.
+    let streamUnloadFlushed = false;
+
+    const commitVisibleAbortedConversation = (options?: { streamInterrupted?: boolean }) => {
       if (abortedConversationCommitted) return true;
 
       const snapshot = getAbortSnapshot(transcriptStore);
@@ -1361,6 +1370,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
         liveRounds: snapshot.liveRounds,
         completedThroughRound: persistableAgentProgress.completedThroughRound,
         suppressedToolTrace: persistableAgentProgress.suppressedToolTrace,
+        streamInterrupted: options?.streamInterrupted === true,
       });
 
       if (partialMessages.length === 0) return false;
@@ -1389,7 +1399,8 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
     // stream. Headless runs the agent in-page: a refresh kills JS and would
     // otherwise leave DB stuck on the user-only snapshot. These checkpoints
     // rewrite the active segment with the best partial assistant so reopen
-    // recovers the answer (or most of it).
+    // recovers the answer (or most of it). Unload also arms a same-tab resume
+    // intent so the next page load can continue the unfinished reply.
     const STREAMING_CHECKPOINT_INTERVAL_MS = 3_000;
     const STREAMING_CHECKPOINT_MIN_CHARS = 80;
     let lastStreamingCheckpointChars = 0;
@@ -1412,7 +1423,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       return total;
     }
 
-    function persistStreamingCheckpoint(force = false) {
+    function persistStreamingCheckpoint(force = false, options?: { streamInterrupted?: boolean }) {
       if (abortedConversationCommitted || streamingCheckpointInFlight) {
         return streamingCheckpointInFlight;
       }
@@ -1432,6 +1443,7 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
         liveRounds: snapshot.liveRounds,
         completedThroughRound: persistableAgentProgress.completedThroughRound,
         suppressedToolTrace: persistableAgentProgress.suppressedToolTrace,
+        streamInterrupted: options?.streamInterrupted === true,
       });
       if (partialMessages.length === 0) {
         return null;
@@ -1477,8 +1489,10 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       const flushOnUnload = () => {
         // Keepalive lets the history write finish after the document unloads.
         armHeadlessUnloadKeepalive();
-        if (!commitVisibleAbortedConversation()) {
-          void persistStreamingCheckpoint(true);
+        streamUnloadFlushed = true;
+        markPendingStreamResume(conversationId);
+        if (!commitVisibleAbortedConversation({ streamInterrupted: true })) {
+          void persistStreamingCheckpoint(true, { streamInterrupted: true });
         }
       };
       window.addEventListener("pagehide", flushOnUnload);
@@ -1754,6 +1768,11 @@ export function useSendChatTurn(params: UseSendChatTurnParams) {
       if (stopped) {
         gatewayRuntimeFinalState = "cancelled";
         requestRemoteGatewayCancellation();
+      }
+      // Keep the same-tab resume flag only when unload flushed a partial answer.
+      // User Stop / success / errors must not auto-continue on the next open.
+      if (!streamUnloadFlushed) {
+        clearPendingStreamResume(conversationId);
       }
       await finalizeConversationRun(gatewayRuntimeFinalState);
       clearConversationStopHandler(conversationId, handleConversationStop);
