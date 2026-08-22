@@ -22,7 +22,7 @@ export type CatalogModelEntry = {
 
 export type CatalogProviderId = "anthropic" | "google" | "openai" | "xai" | "deepseek" | "zhipuai" | "moonshotai" | "minimax" | "stepfun" | "xiaomi" | "longcat" | "alibaba" | "tencent";
 
-export const MODEL_CATALOG_SNAPSHOT_DATE = "2026-08-13";
+export const MODEL_CATALOG_SNAPSHOT_DATE = "2026-08-22";
 
 export const MODEL_CATALOG: Record<CatalogProviderId, readonly CatalogModelEntry[]> = {
   anthropic: [
@@ -63,9 +63,10 @@ export const MODEL_CATALOG: Record<CatalogProviderId, readonly CatalogModelEntry
     { id: "gemini-3.5-flash-lite", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: false } },
     { id: "gemini-3.5-live-translate-preview", contextWindow: 16384, maxOutputToken: 4096 },
     { id: "gemini-3.6-flash", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: false } },
+    { id: "gemini-3.7-flash", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["low", "medium", "high"], off: false } },
     { id: "gemini-embedding-001", contextWindow: 2048, maxOutputToken: 1 },
     { id: "gemini-embedding-2", contextWindow: 8192, maxOutputToken: 1 },
-    { id: "gemini-flash-latest", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: false } },
+    { id: "gemini-flash-latest", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["low", "medium", "high"], off: false } },
     { id: "gemini-flash-lite-latest", contextWindow: 1048576, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: false } },
     { id: "gemini-robotics-er-1.6-preview", contextWindow: 131072, maxOutputToken: 65536, thinking: { levels: ["minimal", "low", "medium", "high"], off: true } },
     { id: "gemma-4-26b-a4b-it", contextWindow: 262144, maxOutputToken: 32768, thinking: { levels: ["high"], off: true } },
@@ -130,6 +131,7 @@ export const MODEL_CATALOG: Record<CatalogProviderId, readonly CatalogModelEntry
     { id: "deepseek-chat", contextWindow: 1000000, maxOutputToken: 384000 },
     { id: "deepseek-reasoner", contextWindow: 1000000, maxOutputToken: 384000, thinking: { levels: [], off: false } },
     { id: "deepseek-v4-flash", contextWindow: 1000000, maxOutputToken: 384000, thinking: { levels: ["low", "high", "max"], off: true } },
+    { id: "deepseek-v4-flash-vision-exp", contextWindow: 1000000, maxOutputToken: 384000, thinking: { levels: ["low", "high", "max"], off: true } },
     { id: "deepseek-v4-pro", contextWindow: 1000000, maxOutputToken: 384000, thinking: { levels: ["high", "max"], off: true } },
   ],
   zhipuai: [
